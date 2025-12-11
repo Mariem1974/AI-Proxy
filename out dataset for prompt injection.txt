@@ -1,0 +1,2 @@
+https://github.com/verazuo/jailbreak_llms/tree/main?tab=readme-ov-file
+https://huggingface.co/datasets/jayavibhav/prompt-injection
