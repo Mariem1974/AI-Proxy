@@ -1,0 +1,15 @@
+fastapi==0.128.0
+uvicorn[standard]==0.40.0
+python-multipart==0.0.21
+emoji==2.15.0
+unicodedata2==17.0.0  # مدمجة في Python
+python-dotenv==1.2.1
+apprise==1.9.7
+transformers==5.0.0  # لـ DistilBERT
+gliner==0.2.24
+nicegui==3.6.1
+httpx==0.28.1
+uuid==1.30
+kafka-python==2.3.0
+redis==7.1.0
+       
