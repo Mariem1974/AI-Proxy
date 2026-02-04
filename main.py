@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 import os
 import sqlite3
 import apprise
+import smtplib
+from email.message import EmailMessage
 
 load_dotenv()
 
@@ -21,9 +23,20 @@ r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
 
 # Apprise
 alert_service = apprise.Apprise()
-alert_service.add(os.getenv("EMAIL_URL", ""))
-alert_service.add(os.getenv("SLACK_URL", ""))
-alert_service.add(os.getenv("TGRAM_URL", ""))
+EMAIL_URL = os.getenv("EMAIL_URL", "").strip()
+SLACK_URL = os.getenv("SLACK_URL", "").strip()
+TGRAM_URL = os.getenv("TGRAM_URL", "").strip()
+
+if EMAIL_URL:
+    alert_service.add(EMAIL_URL)
+if SLACK_URL:
+    alert_service.add(SLACK_URL)
+if TGRAM_URL:
+    alert_service.add(TGRAM_URL)
+
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
+SMTP_TO = os.getenv("SMTP_TO", "").strip()
 
 # Thresholds
 WARNING_WINDOW_SECONDS = 10 * 60
@@ -182,11 +195,36 @@ def log_event(data: dict):
     print("[LOG]", json.dumps(data, ensure_ascii=False, indent=2))
 
 def send_soc_alert(severity: str, details: dict):
-    if not alert_service.servers:
-        print("[ALERT] No channels configured")
-        return
-
     title = f"[PROXY] {severity.upper()} THREAT"
     body = json.dumps(details, indent=2, ensure_ascii=False)
-    alert_service.notify(body=body, title=title)
-    print(f"[ALERT SENT] {title}")
+
+    sent_any = False
+
+    if alert_service.servers:
+        try:
+            alert_service.notify(body=body, title=title)
+            print(f"[ALERT SENT] {title} via Apprise")
+            sent_any = True
+        except Exception as e:
+            print("[ALERT] Apprise send failed:", str(e))
+
+    if SMTP_USER and SMTP_PASS and SMTP_TO:
+        try:
+            msg = EmailMessage()
+            msg["From"] = SMTP_USER
+            msg["To"] = SMTP_TO
+            msg["Subject"] = title
+            msg.set_content(body)
+
+            with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+                smtp.starttls()
+                smtp.login(SMTP_USER, SMTP_PASS)
+                smtp.send_message(msg)
+
+            print(f"[ALERT SENT] {title} via Gmail SMTP")
+            sent_any = True
+        except Exception as e:
+            print("[ALERT] Gmail SMTP send failed:", str(e))
+
+    if not sent_any:
+        print("[ALERT] No channels configured or all sends failed")
