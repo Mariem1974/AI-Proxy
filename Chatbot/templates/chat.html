@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><b>ESSAM — Finance Assistant</b></title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <div class="page">
+
+    <!-- Top bar -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo"><b>E</b></div>
+        <div class="brand-text">
+          <div class="brand-title"><b>ESSAM</b></div>
+          <div class="brand-subtitle"><b>Internal Finance Assistant</b></div>
+        </div>
+      </div>
+
+      <div class="status">
+        <span class="dot dot-off"></span>
+        <span class="status-text">AI_Proxy : OFF</span>
+      </div>
+    </header>
+
+    <!-- Chat -->
+    <main id="chat-box" class="chat"></main>
+
+    <!-- Controls -->
+    <footer class="composer">
+      <div class="input-wrap">
+        <input id="user-input" placeholder="Type your message..." autocomplete="off" />
+      </div>
+
+      <button class="btn primary" onclick="sendMessage()">Send</button>
+      <button class="btn ghost" onclick="resetChat()">Reset</button>
+    </footer>
+
+  </div>
+
+<script>
+function addMessage(role, text) {
+  const chatBox = document.getElementById("chat-box");
+
+  const row = document.createElement("div");
+  row.className = "msg-row " + (role === "user" ? "right" : "left");
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble " + (role === "user" ? "user" : "bot");
+  bubble.innerText = text;
+
+  row.appendChild(bubble);
+  chatBox.appendChild(row);
+  chatBox.scrollTop = chatBox.scrollHeight;
+
+  return bubble;
+}
+
+async function sendMessage() {
+  const input = document.getElementById("user-input");
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  input.value = "";
+  addMessage("user", msg);
+
+  // Bot placeholder bubble
+  const botBubble = addMessage("bot", "Typing...");
+
+  const res = await fetch("/chat", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({message: msg})
+  });
+
+  // If you stream, keep this.
+  // If you don't stream, it still works (it will just appear at once).
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+
+  botBubble.innerText = "";
+
+  while (true) {
+    const {value, done} = await reader.read();
+    if (done) break;
+    botBubble.innerText += decoder.decode(value);
+    document.getElementById("chat-box").scrollTop =
+      document.getElementById("chat-box").scrollHeight;
+  }
+}
+
+async function resetChat() {
+  await fetch("/reset", {method: "POST"});
+  document.getElementById("chat-box").innerHTML = "";
+  document.getElementById("user-input").focus();
+}
+
+// Enter key sends message
+document.getElementById("user-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendMessage();
+});
+</script>
+
+</body>
+</html>
