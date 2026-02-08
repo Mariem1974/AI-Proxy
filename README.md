@@ -53,3 +53,4 @@ Download the POSTMAN collection from [/assets/rag-project.postman_collection.jso
 ```bash
 $ uvicorn main: app --reload --host 0.0.0.0 --port 5000
 ```
+
