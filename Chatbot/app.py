@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, Response, jsonify
 from LLM import chat_stream, reset_memory
+from Classifier import predict_malicious
 
 app = Flask(__name__)
 
@@ -27,3 +28,4 @@ def reset():
 
 if __name__ == "__main__":
     app.run(debug=True)
+
