@@ -5,11 +5,13 @@
 
 import tensorflow as tf
 from transformers import DistilBertTokenizer, TFDistilBertForSequenceClassification
+from transformers import DistilBertTokenizer
+# from transformers.models.distilbert import TFDistilBertForSequenceClassification
 import numpy as np
 
 # --- Configuration ---
 # :wrench: Replace this with the local path where your fine-tuned model is stored
-MODEL_DIR = r"C:\Users\ahmed\OneDrive\Desktop\Project\AI-Proxy\Chatbot\fine-tune3"  # e.g. "C:\\Users\\Hassan\\distilbert_model"
+MODEL_DIR = r"C:\Users\ahmed\OneDrive\Desktop\Clean_Project\AI-Proxy\Chatbot\fine-tune3"  # e.g. "C:\\Users\\Hassan\\distilbert_model"
 LABELS = {0: "Benign", 1: "Malicious"}
 
 # --- 1. Load Model and Tokenizer ---
@@ -48,3 +50,4 @@ def predict_probability(prompt: str):
     malicious_prob = probabilities[1]
 
     return malicious_prob
+
