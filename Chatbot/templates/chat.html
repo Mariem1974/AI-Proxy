@@ -20,9 +20,27 @@
         </div>
       </div>
 
-      <div class="status">
+      <!-- <div class="status">
         <span class="dot dot-off"></span>
         <span class="status-text">AI_Proxy : OFF</span>
+      </div> -->
+      <!-- <div class="status">
+        <span class="dot {{ 'dot-on' if spacy else 'dot-off' }}"></span>
+        <span class="status-text">
+          AI_Proxy : {{ "ON" if spacy else "OFF" }}
+        </span>
+      </div> -->
+      <div class="status">
+        <span class="dot {{ 'dot-on' if spacy else 'dot-off' }}"></span>
+        <span class="status-text">SPACY : {{ "ON" if spacy else "OFF" }}</span>
+      </div>
+      <div class="status">
+        <span class="dot {{ 'dot-on' if bert else 'dot-off' }}"></span>
+        <span class="status-text">BERT : {{ "ON" if bert else "OFF" }}</span>
+      </div>
+      <div class="status">
+        <span class="dot {{ 'dot-on' if pii else 'dot-off' }}"></span>
+        <span class="status-text">PII : {{ "ON" if pii else "OFF" }}</span>
       </div>
     </header>
 
