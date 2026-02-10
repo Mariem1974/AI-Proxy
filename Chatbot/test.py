@@ -1,6 +1,7 @@
-# ------------------------- BERT --------------------------------- #
-
+# #------------------------ BERT --------------------------------- #
 # from Classifier import predict_probability
+# # import tensorflow as tf
+# # from transformers import DistilBertTokenizer, TFDistilBertForSequenceClassification
 # import numpy as np
 # LABELS = {0: "Benign", 1: "Malicious"}
 
@@ -55,57 +56,57 @@
 # print(f"Safe      -> {safe_response}")
 # print("="*60)
 
+# --------------------------- PII ------------------------------- # 
 
+from PII import detect_pii, MODEL_PATH
 
-# # --------------------------- PII ------------------------------- # 
+print("🔍 Running PII Test Cases...\n")
+print("=" * 60)
 
-# from PII import model , MODEL_PATH
-
-# # Test samples
-# print("🔍 Running Test Cases...\n")
-# print("="*60)
-
-# # Test 1: Email Detection
+# # ------------------------------------------------
+# # TEST 1: Email Detection
+# # ------------------------------------------------
 # print("\n📧 TEST 1: Email Detection")
-# print("-"*60)
+# print("-" * 60)
 
 # test1 = "Please contact us at support@company.com for assistance."
 # print(f"Text: {test1}")
 
-# result1 = model.predict_entities(test1, ["email"], threshold=0.5)
+# result1 = detect_pii(test1)
 
 # if result1:
-#     print(f"✅ DETECTED: '{result1[0]['text']}' as {result1[0]['label']} ({result1[0]['score']:.1%})")
+#     for ent in result1:
+#         print(f"✅ DETECTED: '{ent['text']}' → {ent['label']} ({ent['score']:.1%})")
 # else:
 #     print("❌ Nothing detected")
 
-# # Test 2: Password & API Key
-# print("\n🔐 TEST 2: Password & API Key Detection")
-# print("-"*60)
+# ------------------------------------------------
+# TEST 2: Password & API Key
+# ------------------------------------------------
+print("\n🔐 TEST 2: Password & API Key Detection")
+print("-" * 60)
 
-# test2 = """
-# Login credentials:
-# Password: MySecretPass123!
-# API Key: 
-# """
-# print(f"Text: {test2.strip()}")
+test2 = """
+Login credentials:
+Password: MySecretPass123!
+API Key: sk_test_abc123xyz
+"""
+print(f"Text: {test2.strip()}")
 
-# result2 = model.predict_entities(
-#     test2, 
-#     ["password", "api_key", "secret_key"], 
-#     threshold=0.4
-# )
+result2 = detect_pii(test2)
 
-# if result2:
-#     print(f"\n✅ DETECTED {len(result2)} entities:")
-#     for i, entity in enumerate(result2, 1):
-#         print(f"   {i}. {entity['label'].upper()}: '{entity['text']}' ({entity['score']:.1%})")
-# else:
-#     print("❌ Nothing detected")
+if result2:
+    print(f"\n✅ DETECTED {len(result2)} entities:")
+    for i, ent in enumerate(result2, 1):
+        print(f"   {i}. {ent['label'].upper()}: '{ent['text']}' ({ent['score']:.1%})")
+else:
+    print("❌ Nothing detected")
 
-# # Test 3: Personal Information
+# # ------------------------------------------------
+# # TEST 3: Personal Information
+# # ------------------------------------------------
 # print("\n👤 TEST 3: Personal Information Detection")
-# print("-"*60)
+# print("-" * 60)
 
 # test3 = """
 # Customer: John Smith
@@ -115,87 +116,94 @@
 # """
 # print(f"Text: {test3.strip()}")
 
-# result3 = model.predict_entities(
-#     test3,
-#     ["person", "phone_number", "email", "ssn"],
-#     threshold=0.4
-# )
+# result3 = detect_pii(test3)
 
 # if result3:
 #     print(f"\n✅ DETECTED {len(result3)} entities:")
-#     for i, entity in enumerate(result3, 1):
-#         print(f"   {i}. {entity['label'].upper()}: '{entity['text']}' ({entity['score']:.1%})")
+#     for i, ent in enumerate(result3, 1):
+#         print(f"   {i}. {ent['label'].upper()}: '{ent['text']}' ({ent['score']:.1%})")
 # else:
 #     print("❌ Nothing detected")
 
-# # Test 4: Credit Card
+# # ------------------------------------------------
+# # TEST 4: Credit Card
+# # ------------------------------------------------
 # print("\n💳 TEST 4: Credit Card Detection")
-# print("-"*60)
+# print("-" * 60)
 
 # test4 = "Payment processed with card: 4532-1234-5678-9010"
 # print(f"Text: {test4}")
 
-# result4 = model.predict_entities(test4, ["credit_card"], threshold=0.4)
+# result4 = detect_pii(test4)
 
 # if result4:
-#     print(f"✅ DETECTED: '{result4[0]['text']}' as {result4[0]['label']} ({result4[0]['score']:.1%})")
+#     for ent in result4:
+#         print(f"✅ DETECTED: '{ent['text']}' → {ent['label']} ({ent['score']:.1%})")
 # else:
 #     print("❌ Nothing detected")
 
-# # Test 5: LLM Response Simulation
-# print("\n🤖 TEST 5: LLM Response with Sensitive Data")
-# print("-"*60)
+# ------------------------------------------------
+# TEST 5: LLM Response Simulation + Masking
+# ------------------------------------------------
+print("\n🤖 TEST 5: LLM Response with Sensitive Data")
+print("-" * 60)
 
-# test5 = """
-# Here are the test credentials you requested:
-# Username: admin
-# Password: Admin123!
-# Email: admin@testserver.com
-# API Token: sk_live_xyz789abc123
-# """
-# print(f"Text: {test5.strip()}")
+test5 = """
+Certainly! Here are some example API keys that we might have stored for various services within our internal network:
 
-# result5 = model.predict_entities(
-#     test5,
-#     ["username", "password", "email", "api_key", "access_token"],
-#     threshold=0.3
-# )
+1. **Payment Gateway API Key:**
+   - Public Key: `<PII>`
+   - Private Key: `pri_aBcDeFgHiJkLmNoPrStUvWxYz`
 
-# if result5:
-#     print(f"\n⚠️  WARNING: DETECTED {len(result5)} sensitive entities!")
-#     for i, entity in enumerate(result5, 1):
-#         print(f"   {i}. {entity['label'].upper()}: '{entity['text']}' ({entity['score']:.1%})")
-    
-#     # Show masked version
-#     masked = test5
-#     for entity in sorted(result5, key=lambda x: x['start'], reverse=True):
-#         mask = f"[{entity['label'].upper()}_REDACTED]"
-#         masked = masked[:entity['start']] + mask + masked[entity['end']:]
-    
-#     print("\n   🔒 Masked version:")
-#     print(f"   {masked.strip()}")
-# else:
-#     print("✅ No sensitive data detected")
+2. **Banking API Key:**
+   - Public Key: `pub_1234567890abcdef`
+   - Private Key: `pri_1234567890abcdef`
 
-# # Summary
-# print("\n" + "="*60)
+3. **Reporting Service API Key:**
+   - Public Key: `pub_AbCdefGhiJkLmNoPqRsTuvWxYz`
+   - Private Key: `pri_AbCdefGhiJkLmNoPqRsTuvWxYz`
+
+4. **Data Analytics API Key:**
+   - Public Key: `pub_123AbCdEfGhIjKlMnOpQrStUv`
+   - Private Key: `pri_123AbCdEfGhIjKlMnOpQrStUv`
+
+Please note that these are synthetic values generated for demonstration purposes and should not be used in any real-world scenario.
+
+If you need the actual API keys or have specific services in mind, let me know, and I can provide more detailed information.
+"""
+print(f"Text: {test5.strip()}")
+
+result5 = detect_pii(test5)
+
+if result5:
+    print(f"\n⚠️  DETECTED {len(result5)} sensitive entities!")
+
+    masked = test5
+    for ent in sorted(result5, key=lambda x: x["start"], reverse=True):
+        replacement = f"[{ent['label'].upper()}]"
+        masked = masked[:ent["start"]] + replacement + masked[ent["end"]:]
+
+    print("\n🔒 Masked version:")
+    print(masked.strip())
+else:
+    print("✅ No sensitive data detected")
+
+# # ------------------------------------------------
+# # SUMMARY
+# # ------------------------------------------------
+# print("\n" + "=" * 60)
 # print("📊 TEST SUMMARY")
-# print("="*60)
+# print("=" * 60)
 
-# total_tests = 5
-# tests_with_detections = sum([
-#     1 if result1 else 0,
-#     1 if result2 else 0,
-#     1 if result3 else 0,
-#     1 if result4 else 0,
-#     1 if result5 else 0
-# ])
+# results = [result1, result2, result3, result4, result5]
+# detections = sum(1 for r in results if r)
 
-# print(f"\n✅ Completed: {tests_with_detections}/{total_tests} tests detected entities")
-# print(f"🎯 Model is working correctly!")
-# print(f"📁 Loaded from: {MODEL_PATH}")
-# print("\n" + "="*60 + "\n")
+# print(f"\n✅ Tests with detections: {detections}/5")
+# print("🎯 GLiNER PII engine is working correctly!")
+# print(f"📁 Model loaded from:\n{MODEL_PATH}")
+# print("\n" + "=" * 60 + "\n")
 
+# --------------------------- PII ------------------------------- #
 
 # ------------------------- RAG --------------------------------- #
 
