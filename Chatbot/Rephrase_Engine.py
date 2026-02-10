@@ -1,4 +1,3 @@
-# final_firewall.py
 import ollama
 
 class InputRewriter:
