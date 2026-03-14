@@ -1,15 +1,99 @@
-fastapi==0.128.0
-uvicorn[standard]==0.40.0
-python-multipart==0.0.21
-emoji==2.15.0
-unicodedata2==17.0.0  # مدمجة في Python
-python-dotenv==1.2.1
-apprise==1.9.7
-transformers==5.0.0  # لـ DistilBERT
+# ============================================================
+# AI-Proxy Project - Complete Dependencies
+# ============================================================
+# This file contains all Python dependencies needed to run
+# both the main proxy server and the chatbot application.
+#
+# Install with: pip install -r requirements.txt
+# ============================================================
+
+# =====================
+# Core Web Framework
+# =====================
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.20
+python-dotenv==1.0.1
+
+# =====================
+# AI/ML - NLP & Transformers
+# =====================
+# TensorFlow for BERT classifier
+tensorflow==2.18.0
+
+# Hugging Face Transformers (DistilBERT)
+transformers==4.46.3
+
+# PyTorch (required by some transformers models)
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
+
+# GLiNER for PII detection
 gliner==0.2.24
-nicegui==3.6.1
+
+# spaCy for rule-based security
+spacy==3.8.2
+
+# Download spaCy English model
+# python -m spacy download en_core_web_sm
+
+# =====================
+# Vector Database & RAG
+# =====================
+langchain==0.3.12
+langchain-community==0.3.12
+langchain-text-splitters==0.3.4
+
+# Chroma vector database
+chromadb==0.5.23
+
+# HuggingFace embeddings
+huggingface-hub==0.27.1
+
+# Sentence transformers for embeddings
+sentence-transformers==3.3.1
+
+# PDF processing for vector store
+pypdf==5.1.0
+pypdfloader==0.1.0
+
+# =====================
+# Security & Utilities
+# =====================
+emoji==2.14.0
+apprise==1.9.2
+redis==5.2.1
+kafka-python==2.0.2
+
+# =====================
+# LLM/Ollama Integration
+# =====================
+ollama==0.3.3
+requests==2.32.3
 httpx==0.28.1
-uuid==1.30
-kafka-python==2.3.0
-redis==7.1.0
-       
+
+# =====================
+# NiceGUI (optional - for simple UIs)
+# =====================
+# nicegui==1.5.3
+
+# =====================
+# Data Processing
+# =====================
+numpy==1.26.4
+pydantic==2.10.3
+
+# =====================
+# Development & Testing
+# =====================
+pytest==8.3.4
+pytest-asyncio==0.24.0
+
+# ============================================================
+# Note: Some system-level dependencies may be required:
+# - Redis server (for caching/blocking)
+# - Ollama (for local LLM inference)
+#   Install from: https://ollama.com/
+# - Kafka (optional, for message queue)
+# ============================================================
