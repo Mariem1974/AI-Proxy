@@ -2,7 +2,11 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
+import os
+import shutil
+import json
+
 
 class PDFVectorStore:
     """
@@ -12,6 +16,7 @@ class PDFVectorStore:
     - Creating embeddings
     - Building a Chroma vector store
     - Performing similarity search
+    - Dynamic PDF upload and vector store management
     """
 
     def __init__(
@@ -29,6 +34,8 @@ class PDFVectorStore:
         self.chunk_overlap = chunk_overlap
 
         self.vectorstore = None
+        self._is_loaded = False
+        self._chunk_count = 0
 
     # -----------------------------
     # Internal Setup Methods
@@ -59,6 +66,10 @@ class PDFVectorStore:
         chunks = self._split_documents(documents)
         embeddings = self._create_embeddings()
 
+        # Remove existing vector store if present
+        if os.path.exists(self.persist_directory):
+            shutil.rmtree(self.persist_directory)
+
         self.vectorstore = Chroma.from_documents(
             documents=chunks,
             embedding=embeddings,
@@ -66,6 +77,8 @@ class PDFVectorStore:
             collection_metadata={"hnsw:space": "cosine"}
         )
 
+        self._chunk_count = len(chunks)
+        self._is_loaded = True
         print(f"[+] Vector store built with {len(chunks)} chunks")
 
     def load(self):
@@ -75,6 +88,11 @@ class PDFVectorStore:
             persist_directory=self.persist_directory,
             embedding_function=embeddings
         )
+
+        # Get chunk count
+        if self.vectorstore:
+            self._chunk_count = self.vectorstore._collection.count()
+            self._is_loaded = True
 
         print("[+] Vector store loaded from disk")
 
@@ -119,3 +137,96 @@ class PDFVectorStore:
             })
 
         return formatted_results
+
+    # -----------------------------
+    # Context Relevance Methods
+    # -----------------------------
+    def is_ready(self) -> bool:
+        """Check if vector store is ready for similarity search."""
+        return self._is_loaded and self.vectorstore is not None
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get current status of the vector store."""
+        return {
+            "is_loaded": self._is_loaded,
+            "chunk_count": self._chunk_count,
+            "pdf_path": self.pdf_path if os.path.exists(self.pdf_path) else None,
+            "persist_directory": self.persist_directory
+        }
+
+    def check_relevance(
+        self,
+        query: str,
+        threshold: float = 50.0
+    ) -> Dict[str, Any]:
+        """
+        Check if a query is relevant to the stored context.
+        
+        Args:
+            query: User's input prompt
+            threshold: Minimum similarity percentage (0-100)
+            
+        Returns:
+            Dictionary with relevance status and details
+        """
+        if not self.is_ready():
+            return {
+                "relevant": False,
+                "similarity": 0.0,
+                "threshold": threshold,
+                "error": "Vector store not initialized"
+            }
+
+        try:
+            results = self.query(query, k=1)
+            
+            if not results:
+                return {
+                    "relevant": False,
+                    "similarity": 0.0,
+                    "threshold": threshold,
+                    "message": "No matching context found"
+                }
+
+            top_result = results[0]
+            similarity = top_result["similarity"]
+
+            return {
+                "relevant": similarity >= threshold,
+                "similarity": similarity,
+                "threshold": threshold,
+                "matched_content": top_result["content"][:200] + "..." if len(top_result["content"]) > 200 else top_result["content"]
+            }
+
+        except Exception as e:
+            return {
+                "relevant": False,
+                "similarity": 0.0,
+                "threshold": threshold,
+                "error": str(e)
+            }
+
+    def rebuild_from_pdf(self, new_pdf_path: str) -> Dict[str, Any]:
+        """
+        Rebuild vector store from a new PDF file.
+        
+        Args:
+            new_pdf_path: Path to the new PDF file
+            
+        Returns:
+            Dictionary with rebuild status
+        """
+        try:
+            self.pdf_path = new_pdf_path
+            self.build()
+            return {
+                "success": True,
+                "chunk_count": self._chunk_count,
+                "message": "Vector store rebuilt successfully"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to rebuild vector store"
+            }
