@@ -1,567 +1,468 @@
-# 1st code without gliner work
+"""
+AI-Proxy Chatbot — FastAPI Backend
+===================================
 
-# from flask import Flask, render_template, request, Response, jsonify
-# from LLM import chat_stream, reset_memory
-# from Classifier import predict_probability
-# from spacy_rule_engine import SpacyRuleEngine
-# import state 
-# from Rephrase_Engine import InputRewriter
-# from PII import detect_pii
+Input Pipeline:
+  1. spaCy Rule Engine
+  2. BERT Classifier with rephrase loop
+  3. PII detection on user input
+  4. Context relevance check on user input
 
-# app = Flask(__name__)
+Output Pipeline:
+  1. spaCy Rule Engine on LLM response
+  2. PII detection on LLM response
+  3. If PII exists -> OutputRewriter.redact()
+  4. Context relevance check on LLM response
 
-# #------------------- * ----------------------#
-# spacy_engine = SpacyRuleEngine()
-# input_rewriter = InputRewriter()
-# #------------------- * ----------------------#
+Admin Panel:
+  Separate toggles for Input Phase and Output Phase
+"""
 
-# @app.route("/")
-# def index():
-#     return render_template(
-#         "chat.html",
-#         spacy=state.FEATURES["SPACY_FIREWALL"],
-#         bert=state.FEATURES["BERT_FIREWALL"],
-#         pii=state.FEATURES["PII_FIREWALL"]
-#     )
+from fastapi import FastAPI, Request, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
-# # ------------------- admin ----------------------#
-# @app.route("/admin")
-# def admin():
-#     return render_template("admin.html", features=state.FEATURES)
-
-# @app.route("/toggle/spacy", methods=["POST"])
-# def toggle_spacy():
-#     state.FEATURES["SPACY_FIREWALL"] = not state.FEATURES["SPACY_FIREWALL"]
-#     return jsonify(state.FEATURES)
-
-# @app.route("/toggle/bert", methods=["POST"])
-# def toggle_bert():
-#     state.FEATURES["BERT_FIREWALL"] = not state.FEATURES["BERT_FIREWALL"]
-#     return jsonify({"bert": state.FEATURES["BERT_FIREWALL"]})
-
-# @app.route("/toggle/pii", methods=["POST"])
-# def toggle_pii():
-#     state.FEATURES["PII_FIREWALL"] = not state.FEATURES["PII_FIREWALL"]
-#     return jsonify({"pii": state.FEATURES["PII_FIREWALL"]})
-# # ------------------- admin ----------------------#
-
-# # @app.route("/chat", methods=["POST"])
-# # def chat():
-# #     user_input = request.json.get("message", "")
-
-# #     def generate():
-# #         for token in chat_stream(user_input):
-# #             yield token
-# #     return Response(generate(), mimetype="text/plain")
-
-# # @app.route("/chat", methods=["POST"])
-# # def chat():
-# #     data = request.get_json()
-# #     user_input = data.get("message", "")
-
-# #     # ============================
-# #     # PHASE 1 — spaCy INPUT FIREWALL
-# #     # ============================
-# #     if state.FEATURES["SPACY_FIREWALL"]:
-# #         analysis = spacy_engine.analyze_prompt(user_input)
-
-# #         if analysis["malicious"]:
-# #             def blocked():
-# #                 yield "❌ Prompt blocked by spaCy Security Firewall.\n\n"
-# #                 for hit in analysis["matcher_hits"]:
-# #                     yield f"• {hit['type']} → `{hit['text']}`\n"
-# #                 for hit in analysis["regex_hits"]:
-# #                     yield f"• {hit['type']} → `{hit['text']}`\n"
-
-# #             return Response(blocked(), mimetype="text/plain")
-
-# #     # ============================
-# #     # SAFE → SEND TO LLM
-# #     # ============================
-# #     return Response(
-# #         chat_stream(user_input),
-# #         mimetype="text/plain"
-# #     )
-
-# @app.route("/chat", methods=["POST"])
-# def chat():
-#     user_input = request.json.get("message", "")
-#     # =========================
-#     # PHASE 1: INPUT FIREWALL
-#     # =========================
-#     # 1️⃣ SPACY FILTER
-#     if state.FEATURES["SPACY_FIREWALL"]:
-#         spacy_result = spacy_engine.analyze_prompt(user_input)
-#         if spacy_result["malicious"]:
-#             return jsonify({"message": "⚠️ Your message seems malicious (detected by spaCy)."}), 400
-
-#     # 2️⃣ BERT FILTER
-#     if state.FEATURES["BERT_FIREWALL"]:
-#         prob = predict_probability(user_input)  # returns 0-1 probability
-#         if prob < 0.4:  # SAFE
-#             safe_input = user_input
-#         elif 0.4 <= prob < 0.7:  # MEDIUM → rewrite
-#             safe_input = input_rewriter.rewrite(user_input)
-#         else:  # HIGH → block
-#             return jsonify({"message": "⚠️ Your message seems malicious (detected by BERT)."}), 400
-#     else:
-#         safe_input = user_input
-
-#      # =========================
-#     # SEND TO LLM
-#     # =========================
-#     response_text = "".join(chat_stream(safe_input))
-
-#     # =========================
-#     # PHASE 2: OUTPUT PII FILTER
-#     # =========================
-#     if state.FEATURES["PII_FIREWALL"]:
-#         entities = detect_pii(response_text)
-#         print("PII entities:", entities)
-#         # for ent in entities:
-#         #     placeholder = f"<{ent['type']}>"
-#         #     response_text = response_text.replace(ent['text'], placeholder)
-#         for ent in entities:
-#             ent_type = (
-#                 ent.get("type") or
-#                 ent.get("label") or
-#                 ent.get("entity") or
-#                 "PII"
-#             )
-
-#             ent_text = (
-#                 ent.get("text") or
-#                 ent.get("value")
-#             )
-
-#             if ent_text:
-#                 placeholder = f"<{ent_type}>"
-#                 response_text = response_text.replace(ent_text, placeholder)
-
-#     return Response(response_text, mimetype="text/plain")
-
-
-# # @app.route("/chat", methods=["POST"])
-# # def chat():
-# #     user_input = request.json.get("message", "")
-    
-# #     # =========================
-# #     # PHASE 1: INPUT FIREWALL
-# #     # =========================
-# #     # 1️⃣ SPACY FILTER
-# #     if state.FEATURES["SPACY_FIREWALL"]:
-# #         spacy_result = spacy_engine.analyze_prompt(user_input)
-# #         if spacy_result["malicious"]:
-# #             return jsonify({"message": "⚠️ Your message seems malicious (detected by spaCy)."}), 400
-
-# #     # 2️⃣ BERT FILTER WITH REPHRASE LOOP
-# #     safe_input = user_input
-# #     if state.FEATURES["BERT_FIREWALL"]:
-# #         max_rewrites = 3
-# #         iteration = 0
-
-# #         while iteration < max_rewrites:
-# #             prob = predict_probability(safe_input)  # 0-1 probability for Malicious
-# #             if prob < 0.4:  # SAFE
-# #                 break
-# #             elif 0.4 <= prob < 0.7:  # MEDIUM → rewrite
-# #                 iteration += 1
-# #                 safe_input = input_rewriter.rewrite(safe_input)
-# #             else:  # HIGH → block
-# #                 return jsonify({"message": "⚠️ Your message seems malicious (detected by BERT)."}), 400
-# #         else:
-# #             # Exceeded max rephrases → treat as HIGH
-# #             return jsonify({"message": "⚠️ Your message seems malicious after multiple rewrites."}), 400
-
-# #     # =========================
-# #     # SEND TO LLM
-# #     # =========================
-# #     def generate():
-# #         for token in chat_stream(safe_input):
-# #             yield token
-
-# #     return Response(generate(), mimetype="text/plain")
-
-
-# @app.route("/reset", methods=["POST"])
-# def reset():
-#     reset_memory()
-#     return jsonify({"status": "ok"})
-
-
-# if __name__ == "__main__":
-#     app.run(debug=True)
-
-
-# 2nd code with gliner work but missing entities
-
-from flask import Flask, render_template, request, Response, jsonify
 from LLM import chat_stream, reset_memory
 from Classifier import predict_probability
 from spacy_rule_engine import SpacyRuleEngine
-import state 
+import state
 from Rephrase_Engine import InputRewriter, OutputRewriter
-from PII import detect_pii, mask_pii, LABEL_PLACEHOLDERS
+from PII import detect_pii
+from Vector_DB import PDFVectorStore
 
-app = Flask(__name__)
+import tempfile
+import os
+import json
 
-#------------------- * ----------------------#
+# ──────────────────────────────────────
+# App setup
+# ──────────────────────────────────────
+app = FastAPI(title="AI-Proxy Chatbot")
+
+# Serve static files from the original static folder
+# app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Serve React static files from frontend/dist
+REACT_DIST_PATH = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+
+# Jinja2 templates (for fallback HTML pages)
+from fastapi.templating import Jinja2Templates
+templates = Jinja2Templates(directory="templates")
+
+# ──────────────────────────────────────
+# Engines
+# ──────────────────────────────────────
 spacy_engine = SpacyRuleEngine()
 input_rewriter = InputRewriter()
 output_rewriter = OutputRewriter()
-#------------------- * ----------------------#
 
-@app.route("/")
-def index():
-    return render_template(
+context_vectorstore = PDFVectorStore(
+    pdf_path="",
+    persist_directory=state.CONTEXT_SETTINGS["VECTOR_STORE_PATH"]
+)
+
+# ──────────────────────────────────────
+# Constants
+# ──────────────────────────────────────
+MAX_REPHRASE_ITERATIONS = 3
+BERT_SAFE_THRESHOLD = 0.4
+BERT_HIGH_THRESHOLD = 0.7
+
+
+# ──────────────────────────────────────
+# Request model
+# ──────────────────────────────────────
+class ChatMessage(BaseModel):
+    message: str
+
+
+# ══════════════════════════════════════
+# PAGES (API prefix not needed for HTML pages)
+# ══════════════════════════════════════
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    # Serve React app - FastAPI serves index.html from dist for SPA routing
+    index_path = os.path.join(REACT_DIST_PATH, "index.html")
+    if os.path.isfile(index_path):
+        return FileResponse(index_path)
+    
+    # Fallback to old template if React not built
+    return templates.TemplateResponse(
         "chat.html",
-        spacy=state.FEATURES["SPACY_FIREWALL"],
-        bert=state.FEATURES["BERT_FIREWALL"],
-        pii=state.FEATURES["PII_FIREWALL"]
+        {
+            "request": request,
+            "input_spacy": state.FEATURES["INPUT_SPACY_FIREWALL"],
+            "bert": state.FEATURES["BERT_FIREWALL"],
+            "input_pii": state.FEATURES["INPUT_PII_FIREWALL"],
+            "input_context": state.FEATURES["INPUT_CONTEXT_RELEVANCE"],
+            "output_spacy": state.FEATURES["OUTPUT_SPACY_FIREWALL"],
+            "output_pii": state.FEATURES["OUTPUT_PII_FIREWALL"],
+            "output_context": state.FEATURES["OUTPUT_CONTEXT_RELEVANCE"],
+        },
     )
 
-# ------------------- admin ----------------------#
-@app.route("/admin")
-def admin():
-    return render_template("admin.html", features=state.FEATURES)
 
-@app.route("/toggle/spacy", methods=["POST"])
-def toggle_spacy():
-    state.FEATURES["SPACY_FIREWALL"] = not state.FEATURES["SPACY_FIREWALL"]
-    return jsonify(state.FEATURES)
+@app.get("/admin", response_class=HTMLResponse)
+async def admin(request: Request):
+    # Serve React app - FastAPI serves index.html from dist for SPA routing
+    index_path = os.path.join(REACT_DIST_PATH, "index.html")
+    if os.path.isfile(index_path):
+        return FileResponse(index_path)
+    
+    # Fallback to old template if React not built
+    vectorstore_status = context_vectorstore.get_status() if context_vectorstore else {}
 
-@app.route("/toggle/bert", methods=["POST"])
-def toggle_bert():
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "features": state.FEATURES,
+            "context_settings": state.CONTEXT_SETTINGS,
+            "vectorstore_status": vectorstore_status,
+        },
+    )
+
+
+# ══════════════════════════════════════
+# API ENDPOINTS (all prefixed with /api)
+# ══════════════════════════════════════
+
+# ══════════════════════════════════════
+# INPUT TOGGLES
+# ══════════════════════════════════════
+
+@app.post("/api/toggle/input-spacy")
+async def toggle_input_spacy():
+    state.FEATURES["INPUT_SPACY_FIREWALL"] = not state.FEATURES["INPUT_SPACY_FIREWALL"]
+    return JSONResponse(content={"input_spacy": state.FEATURES["INPUT_SPACY_FIREWALL"]})
+
+
+@app.post("/api/toggle/bert")
+async def toggle_bert():
     state.FEATURES["BERT_FIREWALL"] = not state.FEATURES["BERT_FIREWALL"]
-    return jsonify({"bert": state.FEATURES["BERT_FIREWALL"]})
+    return JSONResponse(content={"bert": state.FEATURES["BERT_FIREWALL"]})
 
-@app.route("/toggle/pii", methods=["POST"])
-def toggle_pii():
-    state.FEATURES["PII_FIREWALL"] = not state.FEATURES["PII_FIREWALL"]
-    return jsonify({"pii": state.FEATURES["PII_FIREWALL"]})
-# ------------------- admin ----------------------#
 
-@app.route("/chat", methods=["POST"])
-def chat():
-    user_input = request.json.get("message", "")
+@app.post("/api/toggle/input-pii")
+async def toggle_input_pii():
+    state.FEATURES["INPUT_PII_FIREWALL"] = not state.FEATURES["INPUT_PII_FIREWALL"]
+    return JSONResponse(content={"input_pii": state.FEATURES["INPUT_PII_FIREWALL"]})
 
-    # =========================
-    # PHASE 1: INPUT FIREWALL
-    # =========================
-    # 1️⃣ SPACY FILTER
-    if state.FEATURES["SPACY_FIREWALL"]:
-        spacy_result = spacy_engine.analyze_prompt(user_input)
+
+@app.post("/api/toggle/input-context")
+async def toggle_input_context():
+    if not state.FEATURES["INPUT_CONTEXT_RELEVANCE"]:
+        if not context_vectorstore.is_ready():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "Cannot enable input similarity check before uploading the domain PDF."
+                }
+            )
+
+    state.FEATURES["INPUT_CONTEXT_RELEVANCE"] = not state.FEATURES["INPUT_CONTEXT_RELEVANCE"]
+    return JSONResponse(content={
+        "input_context": state.FEATURES["INPUT_CONTEXT_RELEVANCE"],
+        "vectorstore_status": context_vectorstore.get_status()
+    })
+
+
+# ══════════════════════════════════════
+# OUTPUT TOGGLES
+# ══════════════════════════════════════
+
+@app.post("/api/toggle/output-spacy")
+async def toggle_output_spacy():
+    state.FEATURES["OUTPUT_SPACY_FIREWALL"] = not state.FEATURES["OUTPUT_SPACY_FIREWALL"]
+    return JSONResponse(content={"output_spacy": state.FEATURES["OUTPUT_SPACY_FIREWALL"]})
+
+
+@app.post("/api/toggle/output-pii")
+async def toggle_output_pii():
+    state.FEATURES["OUTPUT_PII_FIREWALL"] = not state.FEATURES["OUTPUT_PII_FIREWALL"]
+    return JSONResponse(content={"output_pii": state.FEATURES["OUTPUT_PII_FIREWALL"]})
+
+
+@app.post("/api/toggle/output-context")
+async def toggle_output_context():
+    if not state.FEATURES["OUTPUT_CONTEXT_RELEVANCE"]:
+        if not context_vectorstore.is_ready():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "Cannot enable output similarity check before uploading the domain PDF."
+                }
+            )
+
+    state.FEATURES["OUTPUT_CONTEXT_RELEVANCE"] = not state.FEATURES["OUTPUT_CONTEXT_RELEVANCE"]
+    return JSONResponse(content={
+        "output_context": state.FEATURES["OUTPUT_CONTEXT_RELEVANCE"],
+        "vectorstore_status": context_vectorstore.get_status()
+    })
+
+
+# ══════════════════════════════════════
+# SHARED SETTINGS
+# ══════════════════════════════════════
+
+@app.post("/api/set-threshold")
+async def set_threshold(threshold: float = Form(...)):
+    if threshold < 0 or threshold > 100:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Threshold must be between 0 and 100"}
+        )
+
+    state.CONTEXT_SETTINGS["SIMILARITY_THRESHOLD"] = threshold
+    return JSONResponse(content={
+        "threshold": state.CONTEXT_SETTINGS["SIMILARITY_THRESHOLD"]
+    })
+
+
+@app.post("/api/upload-context-pdf")
+async def upload_context_pdf(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith(".pdf"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Only PDF files are allowed"}
+        )
+
+    temp_dir = tempfile.gettempdir()
+    temp_pdf_path = os.path.join(temp_dir, f"context_{file.filename}")
+
+    try:
+        with open(temp_pdf_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+
+        result = context_vectorstore.rebuild_from_pdf(temp_pdf_path)
+
+        if result["success"]:
+            state.CONTEXT_SETTINGS["pdf_uploaded"] = True
+            state.CONTEXT_SETTINGS["chunk_count"] = result["chunk_count"]
+
+            return JSONResponse(content={
+                "success": True,
+                "message": f"PDF uploaded successfully! Created {result['chunk_count']} chunks.",
+                "chunk_count": result["chunk_count"],
+                "vectorstore_status": context_vectorstore.get_status()
+            })
+
+        return JSONResponse(
+            status_code=500,
+            content={"error": result.get("error", "Failed to build vector store")}
+        )
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Error processing PDF: {str(e)}"}
+        )
+
+    finally:
+        if os.path.exists(temp_pdf_path):
+            os.remove(temp_pdf_path)
+
+
+@app.get("/api/vectorstore-status")
+async def get_vectorstore_status():
+    return JSONResponse(content=context_vectorstore.get_status())
+
+
+# ══════════════════════════════════════
+# CHAT ENDPOINT
+# ══════════════════════════════════════
+
+@app.post("/api/chat")
+async def chat(body: ChatMessage):
+    user_input = body.message
+    safe_input = user_input
+
+    # ─────────────────────────────────
+    # PHASE 1 — INPUT FIREWALL
+    # ─────────────────────────────────
+
+    # ① Input spaCy Rule Engine
+    if state.FEATURES["INPUT_SPACY_FIREWALL"]:
+        spacy_result = spacy_engine.analyze_prompt(safe_input)
         if spacy_result["malicious"]:
-            return jsonify({"message": "⚠️ Your message seems malicious (detected by spaCy)."}), 400
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "message": "⚠️ Your message was flagged as malicious by Input spaCy Firewall."
+                },
+            )
 
-    # 2️⃣ BERT FILTER
+    # ② BERT Classifier with same style as your current logic
     if state.FEATURES["BERT_FIREWALL"]:
-        prob = predict_probability(user_input)  # returns 0-1 probability
-        if prob < 0.4:  # SAFE
-            safe_input = user_input
-        elif 0.4 <= prob < 0.7:  # MEDIUM → rewrite
-            safe_input = input_rewriter.rewrite(user_input)
-        else:  # HIGH → block
-            return jsonify({"message": "⚠️ Your message seems malicious (detected by BERT)."}), 400
-    else:
-        safe_input = user_input
+        iteration = 0
 
-    # =========================
+        while iteration < MAX_REPHRASE_ITERATIONS:
+            prob = predict_probability(safe_input)
+
+            if prob < BERT_SAFE_THRESHOLD:
+                break
+
+            elif prob >= BERT_HIGH_THRESHOLD:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "message": "⚠️ Your message was flagged as malicious by BERT Classifier."
+                    },
+                )
+
+            else:
+                iteration += 1
+                safe_input = input_rewriter.rewrite(safe_input)
+                print(
+                    f"[BERT] Rephrase iteration {iteration}/{MAX_REPHRASE_ITERATIONS} "
+                    f"— probability was {prob:.2f}\n{safe_input}"
+                )
+
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "message": (
+                        f"⚠️ Your message remains suspicious after "
+                        f"{MAX_REPHRASE_ITERATIONS} rephrase attempts."
+                    )
+                },
+            )
+
+    # ③ Input PII Detection
+    if state.FEATURES["INPUT_PII_FIREWALL"]:
+        input_entities = detect_pii(safe_input)
+        if input_entities:
+            safe_input = output_rewriter.redact(safe_input)
+            print(f"[PII-INPUT] detected {len(input_entities)} entities -> rewritten")
+
+    # ④ Input Similarity Check
+    if state.FEATURES["INPUT_CONTEXT_RELEVANCE"]:
+        threshold = state.CONTEXT_SETTINGS["SIMILARITY_THRESHOLD"]
+        relevance_result = context_vectorstore.check_relevance(
+            query=safe_input,
+            threshold=threshold
+        )
+
+        print(
+            f"[INPUT-CONTEXT] similarity={relevance_result['similarity']:.2f}% "
+            f"threshold={threshold}%"
+        )
+
+        if not relevance_result["relevant"]:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "message": (
+                        f"⚠️ Your question is outside the supported domain "
+                        f"(Similarity: {relevance_result['similarity']:.1f}% - "
+                        f"Threshold: {threshold}%)."
+                    )
+                },
+            )
+
+    # ─────────────────────────────────
     # SEND TO LLM
-    # =========================
+    # ─────────────────────────────────
     response_text = "".join(chat_stream(safe_input))
+    safe_output = response_text
 
-    # =========================
-    # PHASE 2: OUTPUT PII FILTER
-    # =========================
-    if state.FEATURES["PII_FIREWALL"]:
-        entities = detect_pii(response_text)
-        response_text = mask_pii(response_text, entities)
-        # print("PII entities:", entities)  # debug
+    # ─────────────────────────────────
+    # PHASE 2 — OUTPUT FIREWALL
+    # ─────────────────────────────────
+
+    # ① Output spaCy Rule Engine
+    if state.FEATURES["OUTPUT_SPACY_FIREWALL"]:
+        output_spacy_result = spacy_engine.analyze_prompt(safe_output)
+        if output_spacy_result["malicious"]:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "message": "⚠️ The model response was blocked by Output spaCy Firewall."
+                },
+            )
+
+    # ② Output PII Detection
+    if state.FEATURES["OUTPUT_PII_FIREWALL"]:
+        output_entities = detect_pii(safe_output)
+        if output_entities:
+            print(f"[PII-OUTPUT] detected {len(output_entities)} entities -> rewriting output")
+            safe_output = output_rewriter.redact(safe_output)
+
+    # ③ Output Similarity Check
+    if state.FEATURES["OUTPUT_CONTEXT_RELEVANCE"]:
+        threshold = state.CONTEXT_SETTINGS["SIMILARITY_THRESHOLD"]
+        output_relevance_result = context_vectorstore.check_relevance(
+            query=safe_output,
+            threshold=threshold
+        )
+
+        print(
+            f"[OUTPUT-CONTEXT] similarity={output_relevance_result['similarity']:.2f}% "
+            f"threshold={threshold}%"
+        )
+
+        if not output_relevance_result["relevant"]:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "message": (
+                        f"⚠️ The model response is outside the allowed domain "
+                        f"(Similarity: {output_relevance_result['similarity']:.1f}% - "
+                        f"Threshold: {threshold}%)."
+                    )
+                },
+            )
+
+    return PlainTextResponse(content=safe_output)
 
 
-    # If GLiNER detected any PII, further redact using OutputRewriter
-        if entities:
-            response_text = output_rewriter.redact(response_text)
+# ══════════════════════════════════════
+# RESET
+# ══════════════════════════════════════
 
-        # for ent in entities:
-        #     # Get raw label and text safely
-        #     raw_label = ent.get("type") or ent.get("label") or ent.get("entity") or "PII"
-        #     ent_text = ent.get("text") or ent.get("value")
-        #     if not ent_text:
-        #         continue
-
-        #     # Map raw label to friendly placeholder
-        #     placeholder_label = LABEL_PLACEHOLDERS.get(raw_label.lower(), "PII")
-        #     placeholder = f"<{placeholder_label}>"
-
-        #     # Replace all occurrences in response
-        #     response_text = response_text.replace(ent_text, placeholder)
-
-    return Response(response_text, mimetype="text/plain")
-
-@app.route("/reset", methods=["POST"])
-def reset():
+@app.post("/api/reset")
+async def reset():
     reset_memory()
-    return jsonify({"status": "ok"})
+    return JSONResponse(content={"status": "ok"})
 
+
+# ══════════════════════════════════════
+# RUN
+# ══════════════════════════════════════
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    import uvicorn
+    # Note: reload=True causes models to reload when code changes
+    # This is useful during development but consumes more resources
+    uvicorn.run("app:app", host="127.0.0.1", port=5000, reload=True)
 
 
+# ══════════════════════════════════════
+# CATCH-ALL ROUTE (must be last)
+# Serves React app for non-API routes
+# ══════════════════════════════════════
 
-# from flask import Flask, render_template, request, Response, jsonify
-# from LLM import chat_stream, reset_memory
-# from Classifier import predict_probability
-# from spacy_rule_engine import SpacyRuleEngine
-# import state
-# from Rephrase_Engine import InputRewriter ,  OutputRewriter
-# from gliner import GLiNER
-# from PII import detect_pii
-
-
-# app = Flask(__name__)
-
-# # ------------------- * ----------------------#
-# spacy_engine = SpacyRuleEngine()
-# input_rewriter = InputRewriter()
-# output_rewriter = OutputRewriter()
-
-# # Load GLiNER for PII detection
-# MODEL_PATH = r"C:\Users\ahmed\OneDrive\Desktop\Clean_Project\AI-Proxy\Chatbot\models\gretel-gliner\models--gretelai--gretel-gliner-bi-large-v1.0\snapshots\f96d1da43b97bd1846b14a7068a57e1ab15f226e"
-# pii_model = GLiNER.from_pretrained(MODEL_PATH)
-# # ------------------- * ----------------------#
-
-# @app.route("/")
-# def index():
-#     return render_template(
-#         "chat.html",
-#         spacy=state.FEATURES["SPACY_FIREWALL"],
-#         bert=state.FEATURES["BERT_FIREWALL"],
-#         pii=state.FEATURES["PII_FIREWALL"]
-#     )
-
-# # ------------------- admin ----------------------#
-# @app.route("/admin")
-# def admin():
-#     return render_template("admin.html", features=state.FEATURES)
-
-# @app.route("/toggle/spacy", methods=["POST"])
-# def toggle_spacy():
-#     state.FEATURES["SPACY_FIREWALL"] = not state.FEATURES["SPACY_FIREWALL"]
-#     return jsonify(state.FEATURES)
-
-# @app.route("/toggle/bert", methods=["POST"])
-# def toggle_bert():
-#     state.FEATURES["BERT_FIREWALL"] = not state.FEATURES["BERT_FIREWALL"]
-#     return jsonify({"bert": state.FEATURES["BERT_FIREWALL"]})
-
-# @app.route("/toggle/pii", methods=["POST"])
-# def toggle_pii():
-#     state.FEATURES["PII_FIREWALL"] = not state.FEATURES["PII_FIREWALL"]
-#     return jsonify({"pii": state.FEATURES["PII_FIREWALL"]})
-# # ------------------- admin ----------------------#
-
-# @app.route("/chat", methods=["POST"])
-# def chat():
-#     user_input = request.json.get("message", "")
-
-#     # =========================
-#     # PHASE 1: INPUT FIREWALL
-#     # =========================
-#     if state.FEATURES["SPACY_FIREWALL"]:
-#         spacy_result = spacy_engine.analyze_prompt(user_input)
-#         if spacy_result["malicious"]:
-#             return jsonify({"message": "⚠️ Your message seems malicious (detected by spaCy)."}), 400
-
-#     # BERT FILTER WITH REPHRASE LOOP
-#     safe_input = user_input
-#     if state.FEATURES["BERT_FIREWALL"]:
-#         max_rewrites = 3
-#         iteration = 0
-
-#         while iteration < max_rewrites:
-#             prob = predict_probability(safe_input)
-#             if prob < 0.4:  # SAFE
-#                 break
-#             elif 0.4 <= prob < 0.7:  # MEDIUM → rewrite
-#                 iteration += 1
-#                 safe_input = input_rewriter.rewrite(safe_input)
-#             else:  # HIGH → block
-#                 return jsonify({"message": "⚠️ Your message seems malicious (detected by BERT)."}), 400
-#         else:
-#             return jsonify({"message": "⚠️ Your message seems malicious after multiple rewrites."}), 400
-
-#     # =========================
-#     # SEND TO LLM
-#     # =========================
-#     response_text = "".join(chat_stream(safe_input))
-
-#     # =========================
-#     # PHASE 2: OUTPUT PII FILTER
-#     # =========================
-#     if state.FEATURES["PII_FIREWALL"]:
-#         entities = detect_pii(response_text)
-
-#         if entities:
-#             # Log detected types (optional)
-#             detected_types = ", ".join(set(e["label"] for e in entities))
-#             print(f"[PII DETECTED] {detected_types}")
-
-#             # Rewrite & redact response instead of blocking
-#             safe_response = output_rewriter.redact(response_text)
-
-#             return jsonify({
-#                 "message": safe_response,
-#                 "notice": "⚠️ Sensitive information was automatically redacted."
-#             })
-        
-#     return jsonify({"message": response_text})
-
-# @app.route("/reset", methods=["POST"])
-# def reset():
-#     reset_memory()
-#     return jsonify({"status": "ok"})
-
-# if __name__ == "__main__":
-#     app.run(debug=True)
-
-
-# from flask import Flask, render_template, request, jsonify
-# from LLM import chat_stream, reset_memory
-# from Classifier import predict_probability
-# from spacy_rule_engine import SpacyRuleEngine
-# import state
-# from Rephrase_Engine import InputRewriter, OutputRewriter
-# from PII import detect_pii
-
-# app = Flask(__name__)
-
-# # =========================
-# # INIT ENGINES
-# # =========================
-# spacy_engine = SpacyRuleEngine()
-# input_rewriter = InputRewriter()
-# output_rewriter = OutputRewriter()
-
-# # =========================
-# # ROUTES
-# # =========================
-# @app.route("/")
-# def index():
-#     return render_template(
-#         "chat.html",
-#         spacy=state.FEATURES["SPACY_FIREWALL"],
-#         bert=state.FEATURES["BERT_FIREWALL"],
-#         pii=state.FEATURES["PII_FIREWALL"]
-#     )
-
-# # =========================
-# # ADMIN
-# # =========================
-# @app.route("/admin")
-# def admin():
-#     return render_template("admin.html", features=state.FEATURES)
-
-# @app.route("/toggle/spacy", methods=["POST"])
-# def toggle_spacy():
-#     state.FEATURES["SPACY_FIREWALL"] = not state.FEATURES["SPACY_FIREWALL"]
-#     return jsonify(state.FEATURES)
-
-# @app.route("/toggle/bert", methods=["POST"])
-# def toggle_bert():
-#     state.FEATURES["BERT_FIREWALL"] = not state.FEATURES["BERT_FIREWALL"]
-#     return jsonify({"bert": state.FEATURES["BERT_FIREWALL"]})
-
-# @app.route("/toggle/pii", methods=["POST"])
-# def toggle_pii():
-#     state.FEATURES["PII_FIREWALL"] = not state.FEATURES["PII_FIREWALL"]
-#     return jsonify({"pii": state.FEATURES["PII_FIREWALL"]})
-
-# # =========================
-# # CHAT
-# # =========================
-# @app.route("/chat", methods=["POST"])
-# def chat():
-#     user_input = request.json.get("message", "")
-
-#     # =========================
-#     # PHASE 1 — INPUT FIREWALL
-#     # =========================
-#     if state.FEATURES["SPACY_FIREWALL"]:
-#         spacy_result = spacy_engine.analyze_prompt(user_input)
-#         if spacy_result["malicious"]:
-#             return jsonify({
-#                 "message": "⚠️ Your message seems malicious (detected by spaCy)."
-#             }), 400
-
-#     safe_input = user_input
-
-#     if state.FEATURES["BERT_FIREWALL"]:
-#         max_rewrites = 3
-#         iteration = 0
-
-#         while iteration < max_rewrites:
-#             prob = predict_probability(safe_input)
-
-#             if prob < 0.4:
-#                 break  # SAFE
-
-#             elif 0.4 <= prob < 0.7:
-#                 iteration += 1
-#                 safe_input = input_rewriter.rewrite(safe_input)
-
-#             else:
-#                 return jsonify({
-#                     "message": "⚠️ Your message seems malicious (detected by BERT)."
-#                 }), 400
-
-#         if iteration == max_rewrites:
-#             return jsonify({
-#                 "message": "⚠️ Prompt blocked after multiple unsafe rewrites."
-#             }), 400
-
-#     # =========================
-#     # LLM CALL (NON-STREAM)
-#     # =========================
-#     response_text = "".join(chat_stream(safe_input))
-
-#     # =========================
-#     # PHASE 2 — OUTPUT PII FIREWALL
-#     # =========================
-#     if state.FEATURES["PII_FIREWALL"]:
-#         entities = detect_pii(response_text)
-
-#         if entities:
-#             detected_types = ", ".join(
-#                 sorted(set(e["label"] for e in entities))
-#             )
-
-#             print(f"[PII DETECTED] {detected_types}")
-
-#             redacted = output_rewriter.redact(response_text)
-
-#             return jsonify({
-#                 "message": redacted,
-#                 "notice": "⚠️ Sensitive information was automatically redacted."
-#             })
-
-#     # =========================
-#     # FINAL SAFE RESPONSE
-#     # =========================
-#     return jsonify({"message": response_text})
-
-# # =========================
-# # RESET
-# # =========================
-# @app.route("/reset", methods=["POST"])
-# def reset():
-#     reset_memory()
-#     return jsonify({"status": "ok"})
-
-# # =========================
-# # MAIN
-# # =========================
-# if __name__ == "__main__":
-#     app.run(debug=True)
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str):
+    """Serve React app for all routes that aren't API endpoints."""
+    # If it's an API route that wasn't matched, return 404
+    # (This shouldn't happen if all API routes are defined above)
+    if full_path.startswith("api"):
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
+    
+    # Check if the requested file exists in the React dist folder
+    file_path = os.path.join(REACT_DIST_PATH, full_path)
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    
+    # Otherwise, serve the React index.html for SPA routing
+    index_path = os.path.join(REACT_DIST_PATH, "index.html")
+    if os.path.isfile(index_path):
+        return FileResponse(index_path)
+    
+    return JSONResponse(status_code=404, content={"detail": "React app not found. Please run 'npm run build' in the frontend folder."})
