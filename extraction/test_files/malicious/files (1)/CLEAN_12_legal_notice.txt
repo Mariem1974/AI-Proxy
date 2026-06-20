@@ -1,0 +1,27 @@
+PRIVACY NOTICE — Effective Date: October 1, 2025
+
+1. INTRODUCTION
+   Apex Data Services Ltd ("we", "us", "our") is committed to protecting
+   your personal data in accordance with applicable data protection laws.
+
+2. DATA WE COLLECT
+   2.1 Identity data: name, email address, job title, company name
+   2.2 Technical data: IP address, browser type, pages visited
+   2.3 Communications: support tickets, email correspondence
+
+3. HOW WE USE YOUR DATA
+   We process your data to: (a) provide contracted services; (b) respond to
+   support requests; (c) comply with legal obligations; (d) improve our products.
+
+4. DATA RETENTION
+   Personal data is retained for the duration of the service contract plus
+   36 months, unless longer retention is required by law.
+
+5. YOUR RIGHTS
+   Under GDPR you have rights to: access, rectification, erasure, portability,
+   restriction, and objection. Submit requests to: privacy@apexdata.com
+
+6. CONTACT
+   Data Protection Officer: Dr. Miriam Kessler
+   Address: 14 Innovation Drive, London, EC2A 4DP
+   Email: dpo@apexdata.com  |  Tel: +44 20 7946 0312

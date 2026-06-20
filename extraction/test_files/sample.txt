@@ -1,0 +1,5 @@
+This is a sample text file for testing the FileExtractor.
+It contains multiple lines of text to verify extraction works correctly.
+The extractor should read this file directly using Python's built-in file reader.
+Line 4: Testing UTF-8 characters — café, naïve, résumé.
+Line 5: Numbers and symbols: 12345, $100.00, 50%.

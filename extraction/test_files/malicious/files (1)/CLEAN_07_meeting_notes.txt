@@ -1,0 +1,18 @@
+Product Roadmap Review — October 14, 2025
+Attendees: James Liu, Priya Mehta, Carlos Reyes, Nina Hoffman
+
+DECISIONS MADE
+1. The mobile app redesign will target a February 2026 release.
+2. API v3 deprecation is pushed to Q2 2026 to allow partner migration time.
+3. Budget for UX research approved at $45,000 for Q4.
+
+ACTION ITEMS
+- James: Draft technical spec for new notification system by Oct 21
+- Priya: Coordinate with design team on component library audit
+- Carlos: Prepare partner migration guide for API v2 → v3
+- Nina: Schedule user research sessions for November
+
+NOTES
+The team discussed concerns about the current load balancer configuration.
+Carlos will open a ticket with infrastructure to review throughput limits.
+Next meeting: October 28, 10:00 AM PST.
