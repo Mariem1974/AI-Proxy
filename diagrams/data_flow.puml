@@ -1,0 +1,93 @@
+@startuml data_flow
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 13
+
+skinparam rectangle {
+  BackgroundColor #EEF2FF
+  BorderColor     #4F46E5
+  FontColor       #1e1b4b
+  RoundCorner     10
+}
+skinparam database {
+  BackgroundColor #F0FDF4
+  BorderColor     #16A34A
+  FontColor       #14532d
+}
+skinparam storage {
+  BackgroundColor #FFF7ED
+  BorderColor     #EA580C
+  FontColor       #7C2D12
+}
+skinparam arrow {
+  Color     #4F46E5
+  FontColor #475569
+  FontSize  11
+}
+skinparam note {
+  BackgroundColor #FFFBEB
+  BorderColor     #F59E0B
+  FontColor       #78350F
+}
+
+' External entities
+rectangle "Finance\nEmployee" as USER
+rectangle "Admin"             as ADMIN
+
+' Data stores
+database "PostgreSQL+\nTimescaleDB\n(users, sessions,\nlogs hypertable,\nsettings)" as DB
+database "ChromaDB\n(finance domain\nembeddings)"        as VDB
+storage  "Conversation\nMemory\n(JSONB context\nin sessions\ntable)" as MEM
+
+' Pipeline stages
+rectangle "1. Unicode\nFirewall"     as P1
+rectangle "2. Injection\nRules (spaCy)" as P2
+rectangle "3. BERT\nClassifier"      as P3
+rectangle "4. PII\nDetector"         as P4
+rectangle "5. Context\nRelevance"    as P5
+rectangle "Ollama LLM\n(qwen2.5)"    as LLM
+rectangle "6. Output\nRule Check"    as P6
+rectangle "7. Output\nPII Redactor"  as P7
+rectangle "8. Context\nRelevance"    as P8
+rectangle "SOC\nAlerter"             as SOC
+
+rectangle "Telegram /\nGmail"        as NOTIF
+
+' Main flow (top to bottom)
+USER  --> P1  : raw message
+P1    --> P2  : cleaned text
+P2    --> P3  : no injection
+P3    --> P4  : not malicious
+P4    --> P5  : no PII
+P5    --> LLM : context-validated prompt
+
+LLM   --> P6  : LLM response
+P6    --> P7  : rule-checked
+P7    --> P8  : PII redacted
+P8    --> USER : safe response
+
+' Violation path
+P1    --> SOC : violation
+P2    --> SOC : violation
+P3    --> SOC : violation
+P4    --> SOC : violation
+SOC   --> DB  : log event,\nblock user
+SOC   --> NOTIF : alert
+
+' Data stores
+P5    --> VDB : similarity query
+P8    --> VDB : similarity query
+LLM   --> MEM : save turn
+P5    --> MEM : read context
+DB    --> P1  : session / block check
+
+' Admin
+ADMIN --> DB  : manage users,\nconfigure alerts
+
+note right of SOC
+  CRITICAL: permanent block
+  HIGH: temp block
+  INFO: off-topic (no block)
+end note
+
+@enduml

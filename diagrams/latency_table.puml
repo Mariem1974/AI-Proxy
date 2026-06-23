@@ -1,0 +1,17 @@
+@startsalt
+{#
+{* Stage | Technology | Avg Latency | % of Total | Bottleneck? }
+{ Stage 1 - Unicode Firewall    | Python / regex    |     1.4 ms  |  < 0.1 %  | No  }
+{ Stage 2 - spaCy Input Rules   | spaCy NLP         |     0.3 ms  |  < 0.1 %  | No  }
+{ Stage 3 - BERT Classifier     | ModernBERT (CPU)  |   156.8 ms  |    1.0 %  | No  }
+{ Stage 4 - PII Detector (In)   | GLiNER (CPU)      | 2,755.9 ms  |   17.6 %  | YES }
+{ Stage 5 - Context Relevance   | ChromaDB          |    ~5.0 ms  |  < 0.1 %  | No  }
+{ LLM - Ollama qwen2.5:1.5b     | GGUF CPU          |10,306.3 ms  |   65.9 %  | YES }
+{ Stage 6 - spaCy Output Rules  | spaCy NLP         |     0.6 ms  |  < 0.1 %  | No  }
+{ Stage 7 - PII Redactor (Out)  | GLiNER (CPU)      | 2,413.9 ms  |   15.4 %  | YES }
+{ Stage 8 - Context Relevance   | ChromaDB          |    ~5.0 ms  |  < 0.1 %  | No  }
+{   |   |   |   |   }
+{ TOTAL (security pipeline only) | (excl. LLM)      | 5,328.9 ms  |   34.1 %  |     }
+{ TOTAL (full request)           | (incl. LLM)      |15,635.2 ms  |  100.0 %  |     }
+}
+@endsalt

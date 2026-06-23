@@ -1,0 +1,50 @@
+@startuml component_pipeline
+!include C4_Component.puml
+
+title Component Diagram (L3a) - Security Pipeline
+
+Person(user, "Finance Employee", "")
+
+Container_Boundary(api, "FastAPI Backend") {
+  Component(chat_router, "Chat Router", "routers/chat_routes.py", "Orchestrates all 9 pipeline stages for every incoming message")
+  Component(unicode, "Unicode Firewall", "filters/input/unicode_firewall.py", "Stage 1 - blocks homoglyphs, emoji stego, zero-width chars")
+  Component(spacy_in, "Input Rule Engine", "filters/input/spacy_engine.py", "Stage 2 - spaCy regex rules for SQLi, XSS, SSTI, CMDI")
+  Component(bert, "BERT Classifier", "filters/input/bert_classifier.py", "Stage 3 - ModernBERT scores prompt injection probability")
+  Component(rewriter, "Rephrase Engine", "core/rephrase_engine.py", "Stage 3b - rewrites borderline input; loop up to MAX_REPHRASE times")
+  Component(pii_in, "PII Detector", "filters/input/pii_detector.py", "Stage 4 - GLiNER detects 41 PII types (card, SSN, IBAN...)")
+  Component(vdb_in, "Context Relevance (Input)", "core/vector_db.py", "Stage 5 - cosine similarity vs finance domain embeddings")
+  Component(llm, "LLM Module", "core/llm.py", "Calls Ollama API; manages per-user conversation memory dict")
+  Component(spacy_out, "Output Rule Engine", "filters/output/spacy_engine.py", "Stage 6 - scans LLM response for injection / toxic content")
+  Component(pii_out, "Output PII Redactor", "filters/input/pii_detector.py", "Stage 7 - detects and redacts PII leaked by the LLM")
+  Component(vdb_out, "Context Relevance (Output)", "core/vector_db.py", "Stage 8 - validates response is within the finance domain")
+  Component(deps, "Violation Handler", "core/dependencies.py", "Increments failed_attempts; escalates temp -> permanent block")
+}
+
+System_Ext(ollama, "Ollama LLM", "qwen2.5:1.5b")
+System_Ext(chromadb, "ChromaDB", "Finance domain embeddings")
+System_Ext(soc, "SOC Alerter", "Telegram + Gmail alerts")
+
+Rel(user, chat_router, "POST /api/chat")
+Rel(chat_router, unicode, "Stage 1 - scan and clean")
+Rel(unicode, spacy_in, "Stage 2 - sanitised text")
+Rel(spacy_in, bert, "Stage 3 - no injection detected")
+Rel(bert, rewriter, "rephrase if borderline score")
+Rel(rewriter, bert, "re-score rephrased text")
+Rel(bert, pii_in, "Stage 4 - not malicious")
+Rel(pii_in, vdb_in, "Stage 5 - no PII found")
+Rel(vdb_in, llm, "context-validated prompt")
+Rel(llm, spacy_out, "Stage 6 - raw LLM response")
+Rel(spacy_out, pii_out, "Stage 7 - rule-checked output")
+Rel(pii_out, vdb_out, "Stage 8 - PII redacted")
+Rel(vdb_out, user, "safe response")
+
+Rel(unicode, deps, "violation")
+Rel(spacy_in, deps, "violation")
+Rel(bert, deps, "violation")
+Rel(pii_in, deps, "violation")
+Rel(deps, soc, "alert(severity, user, type)")
+Rel(llm, ollama, "POST /api/chat")
+Rel(vdb_in, chromadb, "similarity query")
+Rel(vdb_out, chromadb, "similarity query")
+
+@enduml

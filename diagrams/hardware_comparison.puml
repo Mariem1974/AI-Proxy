@@ -1,0 +1,18 @@
+@startsalt
+{#
+{* Component | Current Machine | Mid-Range GPU | High-End GPU | Expected Speedup }
+{* | i5-10300H + GTX1650 | RTX 4060 / 8GB | RTX 4090 / 24GB | }
+{ Unicode Firewall     |    1.4 ms  |    1.4 ms  |    1.4 ms  | None (CPU-bound, trivial) }
+{ spaCy Rules          |    0.3 ms  |    0.3 ms  |    0.3 ms  | None (CPU-bound, trivial) }
+{ BERT Classifier      |  156.8 ms  |    8-12 ms |    4-6 ms  | 25-40x (CUDA inference) }
+{ PII Detector (In)    | 2,755.9 ms |  120-200ms |  60-100 ms | 15-25x (CUDA inference) }
+{ Context Relevance    |    ~5.0 ms |    ~5.0 ms |    ~5.0 ms | None (already fast) }
+{ LLM (1.5B params)    |10,306.3 ms |  600-900ms | 200-400 ms | 15-50x (GPU + VRAM) }
+{ spaCy Rules (Out)    |    0.6 ms  |    0.6 ms  |    0.6 ms  | None }
+{ PII Redactor (Out)   | 2,413.9 ms |  100-170ms |  50-85 ms  | 15-25x (CUDA inference) }
+{ Context Relevance    |    ~5.0 ms |    ~5.0 ms |    ~5.0 ms | None }
+{   |   |   |   |   }
+{ TOTAL (excl. LLM)    | 5,328.9 ms |  240-400ms | 120-200 ms | ~20x improvement }
+{ TOTAL (incl. LLM)    |15,635.2 ms |  840-1500ms| 320-700 ms | ~20-40x improvement }
+}
+@endsalt

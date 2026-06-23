@@ -1,0 +1,80 @@
+@startuml sequence
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam sequenceArrowThickness 1.5
+skinparam responseMessageBelowArrow true
+skinparam sequence {
+  ParticipantBackgroundColor #EEF2FF
+  ParticipantBorderColor     #4F46E5
+  ParticipantFontColor       #1e1b4b
+  ActorBackgroundColor       white
+  ActorBorderColor           #4F46E5
+  ActorFontColor             #1e1b4b
+  ArrowColor                 #4F46E5
+  LifeLineBorderColor        #CBD5E1
+  BoxBackgroundColor         #F8FAFC
+  BoxBorderColor             #CBD5E1
+  GroupBorderColor           #4F46E5
+  GroupBackgroundColor       #EEF2FF
+  NoteBackgroundColor        #FFFBEB
+  NoteBorderColor            #F59E0B
+  DividerBackgroundColor     #F1F5F9
+}
+
+actor     "User"       as U
+participant "Frontend" as FE
+participant "FastAPI"  as API
+participant "Auth /\nPostgreSQL" as AUTH
+box "9-Stage Security Pipeline"
+  participant "Unicode\nFirewall"  as S1
+  participant "spaCy\nRules"       as S2
+  participant "BERT\nClassifier"   as S3
+  participant "PII\nDetector"      as S4
+  participant "Context\nRelevance" as S5
+end box
+participant "Ollama\nLLM"    as LLM
+participant "SOC\nAlerter"   as SOC
+
+== Login ==
+U  -> FE  : username + password
+FE -> API : POST /api/auth/login
+API -> AUTH : verify user, create session token
+AUTH --> FE : JWT Bearer token (24 h, jti-unique)
+
+== Chat Message ==
+U  -> FE  : type message
+FE -> API : POST /api/chat\n[Authorization: Bearer token]
+API -> AUTH : verify token, check if blocked
+AUTH --> API : user info
+
+group Input Pipeline
+  API -> S1 : scan for unicode attacks
+  API -> S2 : check injection patterns
+  API -> S3 : BERT classification score
+  API -> S4 : detect PII entities
+  API -> S5 : finance domain similarity
+end
+
+alt violation detected (any stage)
+  API -> SOC  : alert(severity, user, detection_type)
+  SOC -> AUTH : increment_failed_attempts()
+  SOC --> API : temp block / permanent block
+  API --> FE  : 403 blocked message
+else off-topic (context relevance)
+  API --> FE  : 400 "Outside finance domain"
+else all stages passed
+  API -> LLM  : sanitised prompt + conversation history
+  LLM --> API : generated response
+
+  group Output Pipeline
+    API -> S2 : check output for injection
+    API -> S4 : redact any PII in response
+    API -> S5 : validate response is on-topic
+  end
+
+  API --> FE  : safe response (markdown)
+  FE  --> U   : rendered response
+end
+
+@enduml

@@ -1,0 +1,31 @@
+@startuml latency_gantt
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+
+skinparam gantt {
+  ArrowColor    #4F46E5
+  BarColor      #93C5FD
+  BarStartColor #3B82F6
+  LineColor     #CBD5E1
+  FontColor     #1e1b4b
+  TodayLineColor #EF4444
+}
+
+title Pipeline Latency per Request (measured on i5-10300H, CPU-only, values in ms)
+
+Project starts 2026-01-01
+saturday are closed
+sunday are closed
+
+[Stage 1 - Unicode Firewall      1 ms]    lasts 1 day    and is colored in LightGreen/DarkGreen
+[Stage 2 - spaCy Input Rules     0.3 ms]  lasts 1 day    and is colored in LightGreen/DarkGreen
+[Stage 3 - BERT Classifier     157 ms]    lasts 16 days  and is colored in LightBlue/DarkBlue
+[Stage 4 - PII Detector       2756 ms]    lasts 276 days and is colored in #FCA5A5/#DC2626
+[Stage 5 - Context Relevance    ~5 ms]    lasts 1 day    and is colored in LightGreen/DarkGreen
+[LLM   -- Ollama qwen2.5:1.5b 10306 ms]  lasts 1031 days and is colored in #FCD34D/#D97706
+[Stage 6 - spaCy Output Rules   0.6 ms]  lasts 1 day    and is colored in LightGreen/DarkGreen
+[Stage 7 - PII Redactor       2414 ms]   lasts 241 days and is colored in #FCA5A5/#DC2626
+[Stage 8 - Context Relevance    ~5 ms]   lasts 1 day    and is colored in LightGreen/DarkGreen
+
+@enduml

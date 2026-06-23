@@ -1,5 +1,9 @@
 import { useState, useEffect } from 'react';
-import type { FeatureFlags, AlertSettings, SecurityLog, User } from '../types/api';
+import type {
+  FeatureFlags, AlertSettings, SecurityLog, User,
+  AlertOverTime, TopThreat, TopBlockedUser, SeverityBreakdown,
+} from '../types/api';
+import { AlertSettingsSchema, flattenZodErrors } from '../lib/schemas';
 import {
   getFeatures,
   toggleInputUnicode, toggleInputSpacy, toggleBert, toggleInputPii, toggleInputContext,
@@ -8,14 +12,21 @@ import {
   uploadContextPdf, setThreshold, getVectorstoreStatus,
   getUsers, unblockUser,
   getAlertSettings, updateAlertSettings,
-  getSecurityLogs, getLogsDownloadUrl,
+  getSecurityLogs, downloadSecurityLogs,
+  getAlertsOverTime, getTopThreats, getTopBlockedUsers, getSeverityBreakdown,
 } from '../services/api';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend,
+} from 'recharts';
 
 interface Props {
   features:         FeatureFlags;
   onFeaturesChange: (f: FeatureFlags) => void;
   user:             User;
   onLogout:         () => void;
+  theme:            'dark' | 'light';
+  onToggleTheme:    () => void;
 }
 
 // ── Toggle component ──────────────────────────────────────────────────────────
@@ -64,16 +75,24 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function Admin({ features, onFeaturesChange, user, onLogout }: Props) {
-  const [tab, setTab] = useState<'pipeline' | 'context' | 'logs' | 'users' | 'alerts'>('pipeline');
+export default function Admin({ features, onFeaturesChange, user, onLogout, theme, onToggleTheme }: Props) {
+  const [tab, setTab] = useState<'pipeline' | 'context' | 'logs' | 'users' | 'alerts' | 'analytics'>('pipeline');
   const [bertModel, setBertModelState] = useState('distilbert');
   const [vsStatus, setVsStatus] = useState<{ is_loaded: boolean; chunk_count: number } | null>(null);
   const [threshold, setThresholdVal] = useState(50);
   const [logs, setLogs]   = useState<SecurityLog[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [alerts, setAlerts] = useState<AlertSettings | null>(null);
+  const [alertErrors, setAlertErrors] = useState<Record<string, string>>({});
   const [logFilter, setLogFilter] = useState('');
   const [toast, setToast] = useState('');
+
+  // Analytics state
+  const [alertsOverTime, setAlertsOverTime] = useState<AlertOverTime[]>([]);
+  const [topThreats, setTopThreats] = useState<TopThreat[]>([]);
+  const [topBlocked, setTopBlocked] = useState<TopBlockedUser[]>([]);
+  const [severityData, setSeverityData] = useState<SeverityBreakdown[]>([]);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
@@ -86,6 +105,34 @@ export default function Admin({ features, onFeaturesChange, user, onLogout }: Pr
       getAlertSettings().then(setAlerts),
     ]).catch(console.error);
   }, []);
+
+  const loadAnalytics = async () => {
+    setAnalyticsLoading(true);
+    try {
+      const [ot, tt, tb, sv] = await Promise.all([
+        getAlertsOverTime(24),
+        getTopThreats(),
+        getTopBlockedUsers(),
+        getSeverityBreakdown(),
+      ]);
+      setAlertsOverTime(ot.data);
+      setTopThreats(tt.data);
+      setTopBlocked(tb.data);
+      setSeverityData(sv.data);
+    } catch (e) {
+      console.error('Analytics load failed:', e);
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  };
+
+  // Load analytics when that tab is activated for the first time
+  useEffect(() => {
+    if (tab === 'analytics' && alertsOverTime.length === 0 && !analyticsLoading) {
+      loadAnalytics();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   const doToggle = async (fn: () => Promise<object>) => {
     await fn();
@@ -109,7 +156,7 @@ export default function Admin({ features, onFeaturesChange, user, onLogout }: Pr
     l.severity?.toLowerCase().includes(logFilter.toLowerCase())
   );
 
-  const tabs = ['pipeline', 'context', 'logs', 'users', 'alerts'] as const;
+  const tabs = ['pipeline', 'context', 'logs', 'users', 'alerts', 'analytics'] as const;
 
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', maxWidth: 1200, margin: '0 auto', padding: 24, color: 'var(--color-text)', background: 'var(--color-bg)', minHeight: '100vh' }}>
@@ -121,16 +168,29 @@ export default function Admin({ features, onFeaturesChange, user, onLogout }: Pr
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700 }}>
-            AI-Proxy Admin
-            <span style={{ marginLeft: 8, background: 'var(--color-primary)', color: '#0b1020', borderRadius: 6, padding: '2px 8px', fontSize: 12 }}>v2</span>
-          </h1>
-          <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>Logged in as {user.username}</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: 'linear-gradient(135deg, var(--color-primary), var(--color-accent))', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', boxShadow: 'var(--shadow-primary)', flexShrink: 0 }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+          </div>
+          <div>
+            <h1 style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.2 }}>
+              Security Booster
+              <span style={{ marginLeft: 8, background: 'var(--color-primary-dim)', color: 'var(--color-primary)', border: '1px solid rgba(0,212,255,0.25)', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600, letterSpacing: '0.03em' }}>CONTROL CENTER</span>
+            </h1>
+            <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 1 }}>
+              <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'var(--color-success)', marginRight: 5, verticalAlign: 'middle' }} />
+              {user.username}
+            </p>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <a href="/" className="btn-secondary" style={{ textDecoration: 'none' }}>Chat</a>
-          <button className="btn-secondary" style={{ color: '#ef4444', borderColor: '#ef4444' }} onClick={onLogout}>Logout</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <a href="/" className="btn-secondary" style={{ textDecoration: 'none' }}>← Chat</a>
+          <button className="btn-theme" title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} onClick={onToggleTheme}>
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+          <button className="btn-secondary" style={{ color: 'var(--color-danger)', borderColor: 'var(--color-danger)' }} onClick={onLogout}>Logout</button>
         </div>
       </div>
 
@@ -239,9 +299,9 @@ export default function Admin({ features, onFeaturesChange, user, onLogout }: Pr
             <input className="input-field" style={{ flex: 1, minWidth: 200 }}
               placeholder="Filter by type / user / severity…"
               value={logFilter} onChange={e => setLogFilter(e.target.value)} />
-            <a href={getLogsDownloadUrl()} download="security_logs.json" className="btn-secondary">
+            <button type="button" className="btn-secondary" onClick={() => downloadSecurityLogs().catch(console.error)}>
               ⬇ Download JSON
-            </a>
+            </button>
             <button className="btn-secondary" onClick={() => getSecurityLogs(200).then(r => setLogs(r.logs))}>
               ↻ Refresh
             </button>
@@ -320,6 +380,143 @@ export default function Admin({ features, onFeaturesChange, user, onLogout }: Pr
         </div>
       )}
 
+      {/* ── ANALYTICS TAB ── */}
+      {tab === 'analytics' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <p style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
+              TimescaleDB-powered security analytics
+            </p>
+            <button className="btn-secondary" onClick={loadAnalytics} disabled={analyticsLoading}>
+              {analyticsLoading ? 'Loading…' : '↻ Refresh'}
+            </button>
+          </div>
+
+          {alertsOverTime.length === 0 && topThreats.length === 0 && !analyticsLoading && (
+            <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--color-text-secondary)', fontSize: 14 }}>
+              No analytics data yet. Click Refresh to load.
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(480px, 1fr))', gap: 20 }}>
+
+            {/* Alerts Over Time */}
+            <Panel title="Alerts Over Time (last 24 h)">
+              {alertsOverTime.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>No data</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={alertsOverTime} margin={{ top: 4, right: 8, left: -20, bottom: 4 }}>
+                    <XAxis dataKey="bucket" tick={{ fontSize: 10 }}
+                      tickFormatter={v => new Date(v).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} />
+                    <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                    <Tooltip
+                      labelFormatter={v => new Date(v).toLocaleString()}
+                      contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', fontSize: 12 }}
+                    />
+                    <Bar dataKey="count" fill="var(--color-primary)" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </Panel>
+
+            {/* Top Threat Types */}
+            <Panel title="Top Threat Types">
+              {topThreats.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>No data</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={topThreats} layout="vertical" margin={{ top: 4, right: 24, left: 8, bottom: 4 }}>
+                    <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
+                    <YAxis type="category" dataKey="type" tick={{ fontSize: 10 }} width={130} />
+                    <Tooltip
+                      contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', fontSize: 12 }}
+                    />
+                    <Bar dataKey="count" fill="#f97316" radius={[0, 3, 3, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </Panel>
+
+            {/* Severity Breakdown */}
+            <Panel title="Severity Breakdown">
+              {severityData.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>No data</p>
+              ) : (() => {
+                const COLORS: Record<string, string> = {
+                  CRITICAL: '#ef4444', HIGH: '#f97316',
+                  MEDIUM: '#eab308', LOW: '#22c55e', INFO: '#00d4ff',
+                };
+                return (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <PieChart>
+                      <Pie
+                        data={severityData}
+                        dataKey="count"
+                        nameKey="severity"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={80}
+                        label={({ severity, percent }) =>
+                          `${severity} ${(percent * 100).toFixed(0)}%`
+                        }
+                        labelLine={false}
+                      >
+                        {severityData.map((entry, i) => (
+                          <Cell
+                            key={i}
+                            fill={COLORS[entry.severity?.toUpperCase()] ?? '#64748b'}
+                          />
+                        ))}
+                      </Pie>
+                      <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                      <Tooltip
+                        contentStyle={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', fontSize: 12 }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                );
+              })()}
+            </Panel>
+
+            {/* Top Blocked Users */}
+            <Panel title="Top Users by Violations">
+              {topBlocked.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>No data</p>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        {['User', 'Violations', 'Fails', 'Temp Blocks', 'Status'].map(h => (
+                          <th key={h} style={{ padding: '6px 10px', textAlign: 'left', borderBottom: '1px solid var(--color-border)', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topBlocked.map((u, i) => (
+                        <tr key={i} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                          <td style={{ padding: '6px 10px', fontWeight: 500 }}>{u.username}</td>
+                          <td style={{ padding: '6px 10px', color: 'var(--color-primary)' }}>{u.total_violations}</td>
+                          <td style={{ padding: '6px 10px' }}>{u.failed_attempts}</td>
+                          <td style={{ padding: '6px 10px' }}>{u.temp_blocks}</td>
+                          <td style={{ padding: '6px 10px' }}>
+                            <span style={{ color: u.is_blocked ? '#ef4444' : '#22c55e', fontWeight: 600 }}>
+                              {u.is_blocked ? 'Blocked' : 'Active'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+
+          </div>
+        </div>
+      )}
+
       {/* ── ALERTS TAB ── */}
       {tab === 'alerts' && alerts && (
         <Panel title="SOC Alert Settings">
@@ -333,8 +530,10 @@ export default function Admin({ features, onFeaturesChange, user, onLogout }: Pr
               <div key={key} style={{ marginBottom: 14 }}>
                 <label style={{ display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 6 }}>{label}</label>
                 <input type="number" className="input-field"
+                  style={alertErrors[key] ? { border: '1px solid #ef4444' } : {}}
                   value={(alerts as unknown as Record<string, number>)[key]}
-                  onChange={e => setAlerts({ ...alerts, [key]: +e.target.value })} />
+                  onChange={e => { setAlerts({ ...alerts, [key]: +e.target.value }); setAlertErrors(ae => ({ ...ae, [key]: '' })); }} />
+                {alertErrors[key] && <p style={{ color: '#f87171', fontSize: 11, marginTop: 4 }}>{alertErrors[key]}</p>}
               </div>
             ))}
             <hr style={{ border: 'none', borderTop: '1px solid var(--color-border)', margin: '16px 0' }} />
@@ -343,10 +542,15 @@ export default function Admin({ features, onFeaturesChange, user, onLogout }: Pr
               <div className={`toggle-switch ${alerts.enable_email ? 'on' : 'off'}`}><div className="toggle-thumb" /></div>
             </div>
             {alerts.enable_email && (
-              <div style={{ marginBottom: 14, marginTop: 10 }}>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Alert Email</label>
-                <input type="email" className="input-field" value={alerts.email_address}
-                  onChange={e => setAlerts({ ...alerts, email_address: e.target.value })} />
+              <div className="mb-4 mt-2">
+                <label className="block text-sm font-medium mb-1">Alert Email</label>
+                <input
+                  type="email"
+                  className={`input-field w-full ${alertErrors.email_address ? 'border border-red-500' : ''}`}
+                  value={alerts.email_address}
+                  onChange={e => { setAlerts({ ...alerts, email_address: e.target.value }); setAlertErrors(ae => ({ ...ae, email_address: '' })); }}
+                />
+                {alertErrors.email_address && <p className="mt-1 text-xs text-red-400">{alertErrors.email_address}</p>}
               </div>
             )}
             <div className="toggle-row" onClick={() => setAlerts({ ...alerts, enable_telegram: !alerts.enable_telegram })}>
@@ -354,14 +558,31 @@ export default function Admin({ features, onFeaturesChange, user, onLogout }: Pr
               <div className={`toggle-switch ${alerts.enable_telegram ? 'on' : 'off'}`}><div className="toggle-thumb" /></div>
             </div>
             {alerts.enable_telegram && (
-              <div style={{ marginBottom: 14, marginTop: 10 }}>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Telegram Chat ID</label>
-                <input type="text" className="input-field" value={alerts.telegram_chat_id}
-                  onChange={e => setAlerts({ ...alerts, telegram_chat_id: e.target.value })} />
+              <div className="mb-4 mt-2">
+                <label className="block text-sm font-medium mb-1">Telegram Chat ID</label>
+                <input
+                  type="text"
+                  className={`input-field w-full ${alertErrors.telegram_chat_id ? 'border border-red-500' : ''}`}
+                  value={alerts.telegram_chat_id}
+                  onChange={e => { setAlerts({ ...alerts, telegram_chat_id: e.target.value }); setAlertErrors(ae => ({ ...ae, telegram_chat_id: '' })); }}
+                />
+                {alertErrors.telegram_chat_id && <p className="mt-1 text-xs text-red-400">{alertErrors.telegram_chat_id}</p>}
               </div>
             )}
-            <button className="btn-primary" style={{ marginTop: 16 }}
-              onClick={async () => { await updateAlertSettings(alerts); showToast('Alert settings saved'); }}>
+            <button
+              type="button"
+              className="btn-primary mt-4"
+              onClick={async () => {
+                const result = AlertSettingsSchema.safeParse(alerts);
+                if (!result.success) {
+                  setAlertErrors(flattenZodErrors(result.error));
+                  return;
+                }
+                setAlertErrors({});
+                await updateAlertSettings(alerts!);
+                showToast('Alert settings saved');
+              }}
+            >
               Save Settings
             </button>
           </div>

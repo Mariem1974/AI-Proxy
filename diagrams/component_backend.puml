@@ -1,0 +1,43 @@
+@startuml component_backend
+!include C4_Component.puml
+
+title Component Diagram (L3b) - Backend Infrastructure
+
+Person(user,  "Finance Employee", "")
+Person(admin, "Admin", "")
+
+System_Ext(postgres, "PostgreSQL + TimescaleDB", "users, sessions, security_logs (hypertable), alert_settings")
+System_Ext(notif,  "Telegram / Gmail", "Alert notifications")
+
+Container_Boundary(api, "FastAPI Backend") {
+  Component(auth_router,  "Auth Router",  "routers/auth_routes.py",  "POST /login, POST /register, GET /me (JWT Bearer)")
+  Component(admin_router, "Admin Router", "routers/admin_routes.py", "GET/POST features, users, alerts, logs")
+  Component(chat_router,  "Chat Router",  "routers/chat_routes.py",  "POST /chat, POST /upload-document, POST /reset")
+  Component(auth,  "Auth Module",  "auth.py",                  "User CRUD, bcrypt hashing, JWT sessions (jti), blocking logic, security log writer — async SQLAlchemy + asyncpg")
+  Component(deps,  "Dependencies", "core/dependencies.py",     "require_admin — Bearer JWT guard (jti-aware); handle_violation escalates warn -> temp -> permanent block")
+  Component(doc,   "Document Pipeline", "document/doc_pipeline.py", "Extracts text from PDF/DOCX/IMG/TXT via FileGate and OCR; runs text through pipeline")
+  Component(soc,   "SOC Alerter",  "alerts/soc_alerter.py",   "Reads credentials fresh on each call; sends HIGH and CRITICAL alerts via Telegram and email")
+  Component(state, "Feature State", "state.py",                "In-memory feature flags and BERT/context thresholds; toggled live by admin without restart")
+  Component(analytics_router, "Analytics Router", "routers/analytics_routes.py", "GET /analytics — alerts over time, top threats, severity breakdown, top blocked users")
+}
+
+Rel(user,  auth_router,  "POST /login, /register")
+Rel(user,  chat_router,  "POST /chat, /upload")
+Rel(admin, admin_router, "GET/POST admin endpoints")
+
+Rel(auth_router,  auth,  "verify_user, create_session")
+Rel(admin_router, deps,  "require_admin")
+Rel(admin_router, state, "toggle features, update thresholds")
+Rel(admin_router, auth,  "get_all_users, unblock_user, get_security_logs, update_alert_settings")
+Rel(chat_router,  auth,  "verify_session, log_security_event, get_alert_settings")
+Rel(chat_router,  deps,  "handle_violation")
+Rel(chat_router,  doc,   "run(file_path)")
+Rel(chat_router,  state, "read FEATURES and thresholds")
+Rel(deps,  auth, "increment_failed_attempts, block_user_temp")
+Rel(deps,  soc,  "alert(severity, user, type)")
+Rel(auth,  postgres, "read / write all tables (asyncpg)")
+Rel(soc,   notif,   "Telegram Bot API, SMTP TLS")
+Rel(admin, analytics_router, "GET /analytics")
+Rel(analytics_router, auth, "query security logs")
+
+@enduml

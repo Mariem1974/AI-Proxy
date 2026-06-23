@@ -13,17 +13,16 @@ from datetime import datetime
 class SOCAlerter:
     """Sends security alerts to configured channels (Telegram + Email)."""
 
-    def __init__(self):
-        self.telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-
     def send_telegram(self, title: str, body: str, chat_id: str) -> bool:
-        if not self.telegram_bot_token or not chat_id:
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        if not token or not chat_id:
+            print("[SOCAlerter] Telegram skipped — TELEGRAM_BOT_TOKEN not set")
             return False
         try:
             import requests
-            url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
             response = requests.post(
-                url, json={"chat_id": chat_id, "text": f"{title}\n\n{body}"}
+                url, json={"chat_id": chat_id, "text": f"{title}\n\n{body}"}, timeout=10
             )
             return response.status_code == 200
         except Exception as e:
@@ -34,6 +33,7 @@ class SOCAlerter:
         smtp_user = os.getenv("SMTP_USER", "").strip()
         smtp_pass = os.getenv("SMTP_PASS", "").strip()
         if not smtp_user or not smtp_pass or not to_email:
+            print("[SOCAlerter] Email skipped — SMTP_USER or SMTP_PASS not set")
             return False
         try:
             msg = EmailMessage()

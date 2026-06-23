@@ -1,0 +1,413 @@
+============================================================
+  AI-PROXY v2 — CHANGES & IMPROVEMENTS SUMMARY
+  For team handover
+============================================================
+
+
+════════════════════════════════════════════════════════════
+  PART 1 — SIMPLE LIST (what was done at a glance)
+════════════════════════════════════════════════════════════
+
+SECURITY FIXES
+  - Admin endpoints had zero authentication — anyone could call them
+  - Login issued tokens that were never stored or checked
+  - All security filters defaulted to OFF (pipeline was effectively disabled)
+  - System prompt did not protect against jailbreaks
+  - CORS was not configured
+
+BUG FIXES
+  - Security log download failed when auth was added (missing auth header on the request)
+  - Secrets (Gmail app password) were committed to .env
+  - Frontend was never rebuilt after changes
+  - All users shared one conversation memory (user A could see user B's chat history)
+
+SOFTWARE ENGINEERING FIXES
+  - No .gitignore (DB file, .env, model weights, __pycache__ all exposed)
+  - No README or setup documentation
+  - Deleted an unused duplicate file (core/vector_db-1.py)
+  - No Pydantic models (DTOs) for request bodies — raw dicts everywhere
+  - SQL schema migration used string formatting (f-string injection risk)
+  - Database connection opened and closed on every single function call
+  - Admin username and password were hardcoded strings in the source code
+  - app.py was ~660 lines (one god file doing everything)
+
+NEW FEATURES ADDED
+  - Zod form validation on the frontend (Login, Register, Admin alert settings)
+  - Dockerfile (multi-stage: Node build + Python runtime)
+  - Docker Compose setup (app + Ollama as separate services)
+  - SETUP_DOCKER.md — step-by-step guide for Docker users
+  - SETUP_LOCAL.md  — step-by-step guide for running without Docker
+  - End-to-end automated test suite (88 tests, covers the full pipeline)
+  - Fixed 6 test failures caused by the security and refactoring changes
+
+
+════════════════════════════════════════════════════════════
+  PART 2 — WITH DESCRIPTION (what was wrong and how it was fixed)
+════════════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────────
+  SECURITY FIXES
+──────────────────────────────────────────────────────────
+
+1. ADMIN ENDPOINTS HAD NO AUTHENTICATION
+   Problem:  Every admin route (toggle filters, view users, download logs,
+             change alert settings, etc.) accepted any request with no
+             token check at all. Any user — or anyone on the network —
+             could call them directly.
+   Fix:      Added a FastAPI Depends(require_admin) dependency to every
+             admin route. It reads the Authorization: Bearer <token>
+             header, looks the token up in the database, checks it has
+             not expired, and confirms the user's role is "admin".
+             Unauthenticated requests get a 401; non-admin tokens get 403.
+
+2. TOKENS WERE NEVER STORED OR VALIDATED
+   Problem:  The login endpoint returned a token string, but that token
+             was never saved anywhere. On every subsequent request the
+             server had no way to verify it, so the check was always
+             skipped.
+   Fix:      Added a 'sessions' table to the SQLite database. On login,
+             a cryptographically random 64-character token is generated
+             with secrets.token_hex(32), stored with a 24-hour expiry,
+             and returned to the client. verify_session() now queries
+             this table and rejects expired or unknown tokens.
+
+3. SECURITY FILTERS DEFAULTED TO OFF
+   Problem:  The nine-stage security pipeline (Unicode firewall, spaCy,
+             BERT, PII detection, etc.) was disabled by default. Every
+             new deployment started with the pipeline doing nothing.
+   Fix:      The three primary filters (INPUT_UNICODE_FIREWALL,
+             INPUT_SPACY_FIREWALL, OUTPUT_SPACY_FIREWALL) now default
+             to True in state.py so the basic protections are active
+             immediately on startup without any admin action.
+
+4. SYSTEM PROMPT DID NOT BLOCK JAILBREAKS
+   Problem:  The LLM system prompt was a vague instruction that did not
+             explicitly tell the model to refuse bypass attempts,
+             roleplaying tricks, or requests for sensitive data.
+   Fix:      Rewrote the system prompt to explicitly list what the model
+             must refuse: bypassing instructions, roleplaying as a
+             different AI, revealing card numbers / CVV codes / PAN /
+             SSN / IBAN, and producing synthetic-but-realistic sensitive
+             data.
+
+5. CORS NOT CONFIGURED
+   Problem:  No CORS middleware was set up, so the frontend running on
+             localhost:5173 (Vite dev server) was blocked by the browser
+             from calling the backend on localhost:5000.
+   Fix:      Added FastAPI CORSMiddleware with explicit allowed origins
+             (http://localhost:5173 and http://localhost:5000), restricted
+             to GET/POST methods and Authorization/Content-Type headers.
+
+
+──────────────────────────────────────────────────────────
+  BUG FIXES
+──────────────────────────────────────────────────────────
+
+6. SECURITY LOG DOWNLOAD BROKE AFTER AUTH WAS ADDED
+   Problem:  The download button was an <a href="/api/security-logs/download">
+             link. Once the endpoint required an Authorization header,
+             clicking the link made a plain browser GET with no header,
+             which always returned 401.
+   Fix:      Replaced the <a> tag with a button that calls the API via
+             fetch() with the auth header, receives the response as a
+             Blob, creates a temporary object URL, and triggers a
+             programmatic download. The file arrives correctly.
+
+7. GMAIL APP PASSWORD COMMITTED TO .env
+   Problem:  The .env file containing a real Gmail app password was
+             present in the project directory and would have been pushed
+             to version control.
+   Fix:      Removed the password from .env. Created .env.example with
+             placeholder values and documentation for every variable.
+             Added .env to .gitignore so it is never committed.
+
+8. FRONTEND BUILD NEVER RUN
+   Problem:  The React application had source changes that were not
+             compiled. The server was serving a stale build from a
+             previous session.
+   Fix:      Ran npm run build in the frontend/ directory and documented
+             this step in both setup guides.
+
+9. ALL USERS SHARED ONE CONVERSATION MEMORY
+   Problem:  The Ollama integration kept one global list of chat messages
+             in memory. Every new user's conversation was appended to the
+             same list, so users could effectively see each other's
+             history and the context grew unboundedly.
+   Fix:      Replaced the global list with a dictionary keyed by user_id:
+             _memories: dict[int, list]. Each user gets their own isolated
+             conversation history. The reset endpoint also accepts an
+             optional user_id to clear one user's memory without affecting
+             others.
+
+
+──────────────────────────────────────────────────────────
+  SOFTWARE ENGINEERING FIXES
+──────────────────────────────────────────────────────────
+
+10. NO .gitignore
+    Problem:  Nothing was excluded from version control. The SQLite
+              database (users.db), .env with secrets, model weight files
+              (*.safetensors, gigabytes large), __pycache__ directories,
+              and zip archives would all be committed.
+    Fix:      Created .gitignore covering .env, users.db, security_logs.json,
+              __pycache__, *.pyc, *.safetensors, *.zip, frontend/node_modules,
+              frontend/dist, context_vectorstore, and pytest caches.
+
+11. NO DOCUMENTATION
+    Problem:  The project had no README, no setup instructions, and no
+              explanation of the architecture or how to run it.
+    Fix:      Created README.md with architecture overview, tech stack,
+              prerequisites, setup steps, test commands, and a security
+              pipeline table. Also created SETUP_DOCKER.md and
+              SETUP_LOCAL.md as dedicated step-by-step guides.
+
+12. UNUSED DUPLICATE FILE
+    Problem:  core/vector_db-1.py existed alongside core/vector_db.py.
+              It was an old copy that was never cleaned up and served
+              no purpose.
+    Fix:      Deleted core/vector_db-1.py.
+
+13. NO PYDANTIC MODELS (DTOs) FOR REQUEST BODIES
+    Problem:  API endpoints accepted raw JSON without any schema
+              validation. Invalid data (wrong types, out-of-range
+              numbers, invalid enum values) would either crash the
+              handler or silently produce wrong behavior.
+    Fix:      Created schemas.py with Pydantic models for every request
+              body: RegisterRequest, LoginRequest, ChatMessage,
+              BertModelRequest (with regex pattern validation),
+              ThresholdRequest (0-100 range), and AlertSettingsRequest
+              (with field-level min/max constraints). FastAPI now
+              automatically validates all inputs and returns 422 with
+              clear error messages on invalid data.
+
+14. SQL SCHEMA MIGRATION USED STRING FORMATTING
+    Problem:  The database migration code used Python f-strings to
+              build ALTER TABLE statements. While the specific values
+              were constants and not user input, this pattern is
+              dangerous and violates the principle of never mixing
+              data into SQL strings.
+    Fix:      Replaced the f-string loop with three explicit
+              cursor.execute("ALTER TABLE users ADD COLUMN ...") calls,
+              each wrapped in try/except sqlite3.OperationalError to
+              handle the case where the column already exists.
+
+15. DATABASE CONNECTION OPENED/CLOSED ON EVERY CALL
+    Problem:  Every database function in auth.py opened a new SQLite
+              connection, performed one operation, and closed it.
+              This was 4-6 lines of boilerplate repeated in every
+              function, with no guarantee the connection was closed
+              on error.
+    Fix:      Added a _get_db() context manager using @contextmanager.
+              It opens the connection, yields it, commits on success,
+              rolls back on any exception, and always closes. Every
+              database function is now a clean "with _get_db() as conn:"
+              block with no error-handling boilerplate.
+
+16. ADMIN CREDENTIALS HARDCODED IN SOURCE CODE
+    Problem:  The default admin username and password were plain strings
+              in the source file. Anyone reading the code immediately
+              knew the credentials, and changing them required editing
+              and redeploying the code.
+    Fix:      Credentials now read from environment variables:
+              ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+              ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+              Teams set them in .env without touching source code.
+
+17. app.py WAS A ~660-LINE GOD FILE
+    Problem:  The entire application — all routes, all business logic,
+              all filter instantiation, all dependencies — lived in one
+              file. It was impossible to navigate, test in isolation,
+              or work on as a team without merge conflicts.
+    Fix:      Split into a clean module structure:
+              - routers/auth_routes.py   — /api/auth/* endpoints
+              - routers/chat_routes.py   — /api/chat, /api/features, etc.
+              - routers/admin_routes.py  — all admin-only endpoints
+              - core/pipeline.py         — all filter singletons
+                                           (created once at import)
+              - core/dependencies.py     — require_admin, handle_violation
+              app.py is now ~50 lines: it registers middleware and
+              includes the three routers.
+
+
+──────────────────────────────────────────────────────────
+  NEW FEATURES ADDED
+──────────────────────────────────────────────────────────
+
+18. ZOD FORM VALIDATION (FRONTEND)
+    What:    TypeScript-first schema validation on every form in the
+             frontend, mirroring the backend Pydantic models.
+    Where:   frontend/src/lib/schemas.ts defines LoginSchema,
+             RegisterSchema, and AlertSettingsSchema. Login.tsx and
+             Register.tsx and Admin.tsx all call .safeParse() before
+             submitting.
+    What users see:
+             - Field-level error messages appear directly under each
+               input (not just one error at the top of the form).
+             - Errors clear on the next keystroke in that field.
+             - Invalid requests are rejected on the client before any
+               network call is made.
+    Examples of rules enforced:
+             - Username: 3-50 chars, letters/numbers/underscores only
+             - Email: must be a valid email format
+             - Password: minimum 6 characters
+             - Confirm password: must match password
+             - Alert numeric fields: integer, within defined min/max
+             - Email address required if "Enable Email Alerts" is on
+
+19. DOCKER SUPPORT
+    What:    Full containerised deployment using Docker Compose.
+             The application can now be started on any machine with
+             Docker installed — no Python, Node.js, or Ollama setup
+             required on the host.
+    Files:
+             - Dockerfile: multi-stage build. Stage 1 (Node 20) builds
+               the React frontend. Stage 2 (Python 3.10-slim) installs
+               all Python dependencies, downloads the spaCy model, and
+               copies the compiled frontend in. The final image contains
+               a fully self-contained application.
+             - docker-compose.yml: defines two services:
+                 * ollama  — official ollama/ollama image, health-checked,
+                             models stored in a named volume so they
+                             survive container restarts.
+                 * app     — the AI-Proxy image, waits for Ollama to
+                             pass its health check before starting,
+                             mounts ./models (ML weights) read-only and
+                             a named volume for the database and logs.
+             - .dockerignore: excludes models/, node_modules/, .env,
+               __pycache__, and test files from the build context.
+    Data persistence:
+             - Ollama model weights: ollama_data named volume
+             - SQLite DB + security logs: app_data named volume
+             - ChromaDB vector store: bind-mounted from ./context_vectorstore
+             - ML model weights: bind-mounted from ./models (read-only)
+
+21. END-TO-END AUTOMATED TEST SUITE
+    What:    A full pytest-based test suite that starts the real server
+             and runs 88 HTTP tests against it — no mocking, no fakes.
+             Every test hits actual endpoints and checks real behavior.
+    File:    tests/e2e_test_suite.py
+    Coverage (test classes):
+             - TestAuth              — register, login, duplicate username,
+                                       wrong password, /me endpoint
+             - TestFeatureToggles   — toggle each of the 9 pipeline filters
+                                       on and off; verify state changes
+             - TestChatEndpoint     — safe message passes, jailbreak blocked,
+                                       PII in prompt blocked, empty message
+                                       rejected, chat memory works per user
+             - TestUserManagement   — list users, block/unblock, verify
+                                       blocked user cannot chat
+             - TestSecurityLogging  — logs written after blocked attempt,
+                                       download endpoint returns valid JSON
+             - TestAlertSettings    — get/update settings, invalid values
+                                       return 422
+             - TestBertModel        — switch between modernbert/distilbert,
+                                       invalid model name returns 422,
+                                       threshold out of range returns 422
+             - TestVectorStore      — upload PDF, context toggle, reject
+                                       non-PDF files
+    Session fixture:
+             A session-scoped autouse fixture logs in as admin once
+             before any test runs and stores the token in a shared
+             _admin_headers dict. All admin endpoint calls in the suite
+             include this header automatically.
+
+22. FIXED 6 TEST FAILURES AFTER SECURITY AND SE REFACTORING
+    The new security and refactoring changes broke several existing
+    tests. Each was diagnosed and fixed:
+
+    a) Toggle test assumed filter starts OFF
+       Problem:  test_toggle_unicode_firewall toggled the filter and
+                 expected a specific state (ON), but after fixing
+                 filters to default ON, the toggle moved it to OFF.
+       Fix:      Rewrote the test to read the state before toggling,
+                 toggle it, read again, and assert the two states
+                 differ — independent of what the starting state is.
+
+    b) Chat test crashed with JSONDecodeError
+       Problem:  test_chat_no_filters_safe_message called response.json()
+                 but the chat endpoint returns PlainTextResponse (a
+                 streaming text reply), not JSON.
+       Fix:      Changed to assert len(response.text) > 0.
+
+    c) VectorStore tests missing auth headers
+       Problem:  Two vector store tests called admin endpoints
+                 (context toggle, upload) without the Authorization
+                 header, getting 401 after auth was enforced.
+       Fix:      Added headers=_admin_headers to those two calls.
+
+    d) test_invalid_model_name expected 400
+       Problem:  Before Pydantic DTOs the handler manually returned
+                 HTTP 400 for an invalid model name. After adding
+                 BertModelRequest with a regex pattern validator,
+                 FastAPI returns 422 Unprocessable Entity automatically.
+       Fix:      Updated assertion to expect 422.
+
+    e) test_set_threshold_out_of_range expected 400
+       Problem:  Same as above — manual 400 replaced by Pydantic
+                 ge/le validation which FastAPI maps to 422.
+       Fix:      Updated assertion to expect 422.
+
+    f) Admin endpoint calls used form data, not JSON
+       Problem:  After converting endpoints to accept Pydantic JSON
+                 bodies, tests that still sent multipart form data
+                 received 422 (wrong content type).
+       Fix:      Changed those test calls from data={} to json={}.
+
+23. SETUP GUIDES
+    SETUP_DOCKER.md:
+             Step-by-step instructions for Docker users covering model
+             file preparation, .env configuration, docker compose up,
+             first-run Ollama model pull, common commands table, and
+             a troubleshooting section. Includes optional GPU
+             acceleration instructions.
+    SETUP_LOCAL.md:
+             Step-by-step instructions for running without Docker:
+             conda/venv setup, pip install, spaCy download, model
+             weight downloads, .env configuration, frontend build,
+             starting Ollama, starting uvicorn. Includes the dev
+             hot-reload workflow and how to run the test suite.
+
+
+──────────────────────────────────────────────────────────
+  FILES CHANGED / CREATED (summary)
+──────────────────────────────────────────────────────────
+
+  Modified:
+    app.py                         — reduced from ~660 to ~50 lines
+    auth.py                        — sessions table, token lifecycle,
+                                     DB context manager, env-var paths
+    core/llm.py                    — per-user memory, OLLAMA_URL from env
+    frontend/src/services/api.ts   — auth headers on all admin calls,
+                                     download via fetch+Blob, Zod parsing
+    frontend/src/App.tsx           — wires setToken on login/logout
+    frontend/src/pages/Admin.tsx   — download button fix, Zod alerts
+    frontend/src/pages/Login.tsx   — Zod field-level validation
+    frontend/src/pages/Register.tsx — Zod field-level validation
+    .env                           — removed real credentials
+    .env.example                   — added all env vars with docs
+    requirements.txt               — (no change, already correct)
+
+  Created:
+    schemas.py                     — Pydantic DTOs
+    state.py                       — feature flags (filters default ON)
+    routers/__init__.py
+    routers/auth_routes.py
+    routers/chat_routes.py
+    routers/admin_routes.py
+    core/pipeline.py               — filter singletons
+    core/dependencies.py           — require_admin, handle_violation
+    frontend/src/lib/schemas.ts    — Zod schemas + flattenZodErrors()
+    tests/e2e_test_suite.py        — 88 end-to-end tests (full pipeline)
+    tests/conftest.py              — pytest configuration
+    Dockerfile
+    docker-compose.yml
+    .dockerignore
+    .gitignore
+    README.md
+    SETUP_DOCKER.md
+    SETUP_LOCAL.md
+
+  Deleted:
+    core/vector_db-1.py            — unused duplicate
+
+============================================================

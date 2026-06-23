@@ -101,3 +101,29 @@ export interface ContextSettings {
   chunk_count:          number;
   VECTOR_STORE_PATH:    string;
 }
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+
+export interface AlertOverTime {
+  bucket:   string;
+  count:    number;
+  severity: string;
+}
+
+export interface TopThreat {
+  type:  string;
+  count: number;
+}
+
+export interface TopBlockedUser {
+  username:         string;
+  failed_attempts:  number;
+  temp_blocks:      number;
+  is_blocked:       boolean;
+  total_violations: number;
+}
+
+export interface SeverityBreakdown {
+  severity: string;
+  count:    number;
+}

@@ -55,6 +55,32 @@ class InputSpacyEngine:
             [{"LOWER": {"IN": ["act", "pretend", "roleplay", "imagine"]}}, {"LOWER": "as"}],
             [{"LOWER": {"IN": ["developer", "jailbreak", "god", "dan"]}}, {"LOWER": "mode"}],
         ]
+        prompt_leaking_patterns = [
+            # "display/reveal/show your system prompt/instructions/rules"
+            [
+                {"LOWER": {"IN": ["display", "reveal", "show", "print", "repeat", "output", "share", "give", "tell", "expose", "leak"]}},
+                {"OP": "*"},
+                {"LOWER": {"IN": ["system", "initial", "hidden", "secret", "original", "base", "actual", "underlying", "real"]}},
+                {"OP": "?"},
+                {"LOWER": {"IN": ["prompt", "instructions", "rules", "context", "directive", "guidelines", "training"]}},
+            ],
+            # "what is your system prompt/instructions"
+            [
+                {"LOWER": "what"},
+                {"LOWER": {"IN": ["is", "are", "were"]}},
+                {"LOWER": "your"},
+                {"OP": "?"},
+                {"LOWER": {"IN": ["system", "initial", "hidden", "secret", "original"]}},
+                {"LOWER": {"IN": ["prompt", "instructions", "rules", "directive", "guidelines"]}},
+            ],
+            # "what were you told / instructed / trained"
+            [
+                {"LOWER": "what"},
+                {"LOWER": "were"},
+                {"LOWER": "you"},
+                {"LOWER": {"IN": ["told", "instructed", "trained", "given", "programmed"]}},
+            ],
+        ]
         sql_patterns = [
             [{"LOWER": "union"}, {"LOWER": {"IN": ["select", "all"]}}],
             [{"LOWER": "select"}, {"OP": "*"}, {"LOWER": "from"}],
@@ -70,6 +96,7 @@ class InputSpacyEngine:
             [{"LOWER": {"REGEX": "^on(load|click|error|mouseover|focus|blur)$"}}],
         ]
         self.matcher.add("PROMPT_INJECTION", injection_patterns)
+        self.matcher.add("PROMPT_LEAKING", prompt_leaking_patterns)
         self.matcher.add("SQL_INJECTION", sql_patterns)
         self.matcher.add("XSS_ATTACK", xss_patterns)
 

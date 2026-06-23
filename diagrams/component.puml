@@ -1,0 +1,95 @@
+@startuml component
+!include C4Component.puml
+
+title Component Diagram - FastAPI Backend
+
+Person(user,  "Finance Employee", "")
+Person(admin, "Admin", "")
+
+System_Ext(ollama,   "Ollama LLM",      "Local LLM inference")
+System_Ext(postgres, "PostgreSQL + TimescaleDB", "users, sessions, security_logs (hypertable), alert_settings")
+System_Ext(chromadb, "Vector Store",    "Finance embeddings")
+System_Ext(notif,    "Telegram / Gmail","Alert notifications")
+
+Container_Boundary(api, "FastAPI Backend") {
+
+  ' ── Routers ────────────────────────────────────────────────
+  Component(auth_router,  "Auth Router",  "FastAPI Router\nrouters/auth_routes.py",  "POST /login\nPOST /register\nGET  /me")
+  Component(chat_router,  "Chat Router",  "FastAPI Router\nrouters/chat_routes.py",  "POST /chat\nPOST /upload-document\nPOST /reset")
+  Component(admin_router, "Admin Router", "FastAPI Router\nrouters/admin_routes.py", "GET/POST /users\nGET/POST /alerts\nGET /logs\nGET/POST /features")
+
+  ' ── Auth & Session ─────────────────────────────────────────
+  Component(auth,    "Auth Module",    "Python\nauth.py",                  "User CRUD, bcrypt hashing,\nJWT sessions (jti), blocking logic,\nsecurity log writer — async SQLAlchemy + asyncpg")
+  Component(deps,    "Dependencies",   "Python\ncore/dependencies.py",     "require_admin — Bearer JWT guard (jti-aware)\nhandle_violation — block escalation")
+
+  ' ── Security Pipeline ──────────────────────────────────────
+  Component(unicode, "Unicode Firewall",   "Python\nfilters/input/unicode_firewall.py", "Detects homoglyphs,\nemoji stego, zero-width chars")
+  Component(spacy_in,"Input Rule Engine",  "spaCy\nfilters/input/spacy_engine.py",     "SQLi, XSS, SSTI, CMDI\ninjection pattern matching")
+  Component(bert,    "BERT Classifier",    "ModernBERT / DistilBERT\nfilters/input/bert_classifier.py", "Prompt injection probability\nwith rephrase loop")
+  Component(pii,     "PII Detector",       "GLiNER\nfilters/input/pii_detector.py",    "Detects 41 PII types\n(card, SSN, IBAN, email...)")
+  Component(vdb,     "Context Relevance",  "ChromaDB\ncore/vector_db.py",              "Cosine similarity vs\nfinance domain knowledge base")
+  Component(spacy_out,"Output Rule Engine","spaCy\nfilters/output/spacy_engine.py",    "Checks and redacts\nLLM response threats")
+
+  ' ── LLM & Memory ───────────────────────────────────────────
+  Component(llm,     "LLM Module",     "Python\ncore/llm.py",             "Manages per-user conversation\nmemory, calls Ollama API")
+  Component(rewriter,"Rephrase Engine","Python\ncore/rephrase_engine.py", "Rewrites flagged input\nfor BERT rephrase loop;\nredacts PII from output")
+
+  ' ── Document Processing ─────────────────────────────────────
+  Component(doc,     "Document Pipeline", "Python\ndocument/doc_pipeline.py", "Orchestrates PDF/DOCX/IMG/TXT\nextraction + pipeline scan")
+
+  ' ── Alerting ────────────────────────────────────────────────
+  Component(soc,     "SOC Alerter",    "Python\nalerts/soc_alerter.py",   "Sends Telegram messages\nand SMTP emails on violations")
+
+  ' ── State ───────────────────────────────────────────────────
+  Component(state,   "Feature State",  "Python\nstate.py",                "In-memory feature flags\nand BERT/context thresholds")
+
+  ' ── Analytics ───────────────────────────────────────────────
+  Component(analytics_router, "Analytics Router", "FastAPI Router\nrouters/analytics_routes.py", "GET /analytics — alerts over time,\ntop threats, severity breakdown,\ntop blocked users")
+}
+
+' External actors -> Routers
+Rel(user,        auth_router,  "POST /login, /register")
+Rel(user,        chat_router,  "POST /chat, /upload")
+Rel(admin,       admin_router, "GET/POST admin endpoints")
+Rel(admin,       analytics_router, "GET /analytics")
+
+' Routers -> Auth
+Rel(auth_router,  auth,   "verify_user\ncreate_session")
+Rel(chat_router,  auth,   "verify_session\nlog_security_event\nblock_user_temp")
+Rel(admin_router, deps,   "require_admin")
+Rel(deps,         auth,   "verify_session")
+
+' Chat pipeline flow
+Rel(chat_router, unicode,    "scan + clean")
+Rel(chat_router, spacy_in,   "analyze")
+Rel(chat_router, bert,       "predict")
+Rel(chat_router, rewriter,   "rewrite (rephrase loop)")
+Rel(chat_router, pii,        "detect_and_mask")
+Rel(chat_router, vdb,        "check_relevance")
+Rel(chat_router, llm,        "chat_stream")
+Rel(chat_router, spacy_out,  "analyze output")
+Rel(chat_router, deps,       "handle_violation")
+
+' Document pipeline
+Rel(chat_router, doc,        "run(file)")
+Rel(doc,         pii,        "detect_and_mask")
+Rel(doc,         spacy_in,   "analyze")
+
+' Violation -> SOC
+Rel(deps,  soc,  "alert(severity)")
+Rel(soc,   auth, "increment_failed_attempts\nblock_user_temp")
+
+' State
+Rel(chat_router,  state, "reads feature flags\nand thresholds")
+Rel(admin_router, state, "toggles features")
+
+' Analytics
+Rel(analytics_router, auth, "query security logs")
+
+' External integrations
+Rel(llm,  ollama,   "POST /api/chat")
+Rel(auth, postgres, "read / write (asyncpg)")
+Rel(vdb,  chromadb, "similarity search")
+Rel(soc,  notif,    "Telegram Bot API\nSMTP email")
+
+@enduml

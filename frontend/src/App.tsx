@@ -4,7 +4,7 @@ import Chat from './pages/Chat';
 import Admin from './pages/Admin';
 import Login from './pages/Login';
 import Register from './pages/Register';
-import { getFeatures } from './services/api';
+import { getFeatures, setToken as apiSetToken } from './services/api';
 import type { FeatureFlags, User } from './types/api';
 
 const defaultFeatures: FeatureFlags = {
@@ -36,9 +36,21 @@ export default function App() {
     localStorage.getItem('ai_proxy_token')
   );
 
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    (localStorage.getItem('ai_proxy_theme') as 'dark' | 'light') || 'dark'
+  );
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('ai_proxy_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+
   const handleLogin = (loggedInUser: User, authToken: string) => {
     setUser(loggedInUser);
     setToken(authToken);
+    apiSetToken(authToken);
     localStorage.setItem('ai_proxy_user', JSON.stringify(loggedInUser));
     localStorage.setItem('ai_proxy_token', authToken);
   };
@@ -46,6 +58,7 @@ export default function App() {
   const handleLogout = () => {
     setUser(null);
     setToken(null);
+    apiSetToken(null);
     localStorage.removeItem('ai_proxy_user');
     localStorage.removeItem('ai_proxy_token');
   };
@@ -64,16 +77,16 @@ export default function App() {
         <Route path="/login"
           element={isAuthenticated
             ? <Navigate to={isAdmin ? '/admin' : '/'} replace />
-            : <Login onLogin={handleLogin} />}
+            : <Login onLogin={handleLogin} theme={theme} onToggleTheme={toggleTheme} />}
         />
         <Route path="/register"
           element={isAuthenticated
             ? <Navigate to="/" replace />
-            : <Register onLogin={handleLogin} />}
+            : <Register onLogin={handleLogin} theme={theme} onToggleTheme={toggleTheme} />}
         />
         <Route path="/"
           element={isAuthenticated
-            ? <Chat features={features} user={user!} onLogout={handleLogout} />
+            ? <Chat features={features} user={user!} onLogout={handleLogout} theme={theme} onToggleTheme={toggleTheme} />
             : <Navigate to="/login" replace />}
         />
         <Route path="/admin"
@@ -86,6 +99,8 @@ export default function App() {
                   onFeaturesChange={setFeatures}
                   user={user!}
                   onLogout={handleLogout}
+                  theme={theme}
+                  onToggleTheme={toggleTheme}
                 />}
         />
       </Routes>

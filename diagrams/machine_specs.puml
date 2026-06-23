@@ -1,0 +1,13 @@
+@startsalt
+{#
+{* Component | Specification }
+{ CPU     | Intel Core i5-10300H @ 2.50 GHz (4 cores / 8 threads) }
+{ RAM     | 32 GB DDR4-3200 MHz }
+{ GPU     | NVIDIA GeForce GTX 1650 - 4 GB VRAM (NOT used - CPU inference only) }
+{ Storage | Samsung SSD 990 PRO 1 TB (NVMe PCIe 4.0) }
+{ OS      | Windows 11 Education }
+{ Python  | 3.10 (Miniconda3 - ai_proxy env) }
+{ PyTorch | 2.5.1 + cpu (no CUDA build installed) }
+{ Ollama  | Local server - qwen2.5:1.5b (GGUF quantized Q4) }
+}
+@endsalt

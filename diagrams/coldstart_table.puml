@@ -1,0 +1,13 @@
+@startsalt
+{#
+{* Component | Model / Library | Cold-Start Time | Loaded Once? }
+{ Unicode Firewall  | Python + unicodedata      |     405 ms |  Yes - on startup }
+{ spaCy Input Rules | en_core_web_sm            |     299 ms |  Yes - on startup }
+{ BERT Classifier   | ModernBERT (149M params)  |  36,748 ms |  Yes - on startup }
+{ PII Detector      | GLiNER bi-large (v1.0)    |  48,356 ms |  Yes - on startup }
+{ Context VectorDB  | ChromaDB + embeddings     |      ~0 ms |  Yes - on startup }
+{ Output spaCy      | en_core_web_sm            |     209 ms |  Yes - on startup }
+{   |   |   |   }
+{ TOTAL cold start  | (sum of all models)       |  ~86,000 ms (~86 s) | One-time only }
+}
+@endsalt

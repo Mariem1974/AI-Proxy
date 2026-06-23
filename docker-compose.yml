@@ -1,0 +1,118 @@
+services:
+
+  # ── PostgreSQL + TimescaleDB ──────────────────────────────────────────────
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: ai_proxy_postgres
+    environment:
+      POSTGRES_DB: ai_proxy
+      POSTGRES_USER: ai_proxy
+      POSTGRES_PASSWORD: ai_proxy_secret
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_proxy -d ai_proxy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # ── ChromaDB vector store ─────────────────────────────────────────────────
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: ai_proxy_chromadb
+    volumes:
+      - chromadb_data:/chroma/chroma
+    ports:
+      - "8001:8000"
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  # ── Ollama — local LLM server ─────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai_proxy_ollama
+    volumes:
+      - ollama_data:/root/.ollama   # persists downloaded models across restarts
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  # ── One-shot: pulls required Ollama models on first run ───────────────────
+  # Runs once after ollama is healthy, then exits (restart: no).
+  # Models are stored in the shared ollama_data volume so this is a no-op
+  # on subsequent starts once the models are already cached.
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: ai_proxy_ollama_init
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c",
+      "ollama pull qwen2.5:1.5b && ollama pull llama3.2 && echo 'Models ready'"]
+    restart: "no"
+
+  # ── AI-Proxy application ──────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai_proxy_app
+    ports:
+      - "5000:5000"
+    environment:
+      # Container-specific overrides — these win over .env values
+      OLLAMA_URL: http://ollama:11434/api/chat
+      HF_HUB_OFFLINE: "1"
+      DATABASE_URL: postgresql://ai_proxy:ai_proxy_secret@postgres:5432/ai_proxy
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: 8000
+      JWT_SECRET: change_this_in_production_use_long_random_string
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_HOURS: 24
+      SESSION_IDLE_TIMEOUT_MINUTES: 30
+      # Model paths inside the container (mapped via the volume below)
+      MODERNBERT_MODEL_DIR: /app/models/modernbert
+      GLINER_MODEL_PATH: /app/models/gretel-gliner/hub/models--gretelai--gretel-gliner-bi-large-v1.0/snapshots/f96d1da43b97bd1846b14a7068a57e1ab15f226e
+    env_file:
+      - path: .env          # picks up ADMIN_USERNAME, ADMIN_PASSWORD, SMTP_*, TELEGRAM_BOT_TOKEN
+        required: false     # safe to start without .env; defaults apply from environment: block above
+    volumes:
+      # ML models (read-only) — place or symlink your checkpoints here:
+      #   ./models/modernbert/        ← ModernBERT checkpoint directory
+      #   ./models/gretel-gliner/...  ← GLiNER snapshot (already here if you cloned)
+      - ./models:/app/models:ro
+    depends_on:
+      ollama:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ollama_data:    # Ollama model weights (qwen2.5:1.5b, llama3.2)
+  postgres_data:  # PostgreSQL + TimescaleDB data
+  chromadb_data:  # ChromaDB vector collections

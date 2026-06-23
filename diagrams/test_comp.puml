@@ -1,0 +1,9 @@
+@startuml
+!include C4_Component.puml
+title test
+Person(u, "User", "test user")
+Container_Boundary(b, "Backend") {
+  Component(c, "Chat", "Python", "handles chat")
+}
+Rel(u, c, "uses")
+@enduml

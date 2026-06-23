@@ -29,14 +29,16 @@ class PIIDetector:
     """Detects and masks PII using GLiNER."""
 
     def __init__(self):
-        model_path = os.getenv(
+        from pathlib import Path
+        raw_path = os.getenv(
             "GLINER_MODEL_PATH",
-            "./models/gretel-gliner/models--gretelai--gretel-gliner-bi-large-v1.0"
+            "./models/gretel-gliner/hub/models--gretelai--gretel-gliner-bi-large-v1.0"
             "/snapshots/f96d1da43b97bd1846b14a7068a57e1ab15f226e"
         )
+        model_path = Path(raw_path).resolve()
         try:
             from gliner import GLiNER
-            self._model = GLiNER.from_pretrained(model_path)
+            self._model = GLiNER.from_pretrained(model_path, local_files_only=True)
             print("[PIIDetector] GLiNER loaded")
         except Exception as e:
             self._model = None

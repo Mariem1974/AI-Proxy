@@ -2,302 +2,367 @@
 auth.py
 =======
 User management, authentication, security logging, and blocking logic.
-Security logs are written to SQLite AND exported as JSON to ./security_logs.json.
+Backed by PostgreSQL + TimescaleDB via SQLAlchemy async.
+All public functions are async — callers must await them.
 """
 
-import sqlite3
-import hashlib
-import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 
-DATABASE_PATH = "users.db"
-LOGS_JSON_PATH = "security_logs.json"
+from sqlalchemy import text, select, update
+
+import db as _db
+from auth_utils import (
+    hash_password, verify_password,
+    create_access_token, decode_token,
+)
+
+SESSION_IDLE_TIMEOUT_MINUTES = int(
+    os.getenv("SESSION_IDLE_TIMEOUT_MINUTES", "30")
+)
 
 
 # ── Database initialisation ───────────────────────────────────────────────────
 
-def init_database():
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            role TEXT NOT NULL DEFAULT 'user',
-            is_blocked INTEGER DEFAULT 0,
-            blocked_at TIMESTAMP,
-            failed_attempts INTEGER DEFAULT 0,
-            temp_blocks INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    for col, typedef in [
-        ("blocked_at", "TIMESTAMP"),
-        ("failed_attempts", "INTEGER DEFAULT 0"),
-        ("temp_blocks", "INTEGER DEFAULT 0"),
-    ]:
-        try:
-            cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {typedef}")
-        except sqlite3.OperationalError:
-            pass
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS security_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            user_id INTEGER,
-            username TEXT,
-            prompt TEXT,
-            detection_type TEXT,
-            action TEXT,
-            severity TEXT,
-            details TEXT
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS alert_settings (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            max_attempts_to_block INTEGER DEFAULT 3,
-            warning_window_minutes INTEGER DEFAULT 10,
-            block_duration_minutes INTEGER DEFAULT 30,
-            max_temp_blocks INTEGER DEFAULT 3,
-            enable_email INTEGER DEFAULT 0,
-            enable_telegram INTEGER DEFAULT 0,
-            email_address TEXT,
-            telegram_chat_id TEXT,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    cursor.execute("SELECT COUNT(*) FROM alert_settings")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("""
-            INSERT INTO alert_settings (id, max_attempts_to_block, warning_window_minutes,
-                                        block_duration_minutes, max_temp_blocks)
-            VALUES (1, 3, 10, 30, 3)
-        """)
-
-    conn.commit()
-    conn.close()
-
-
-def _hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+async def init_database():
+    """Delegates to db.init_db() — called by app.py lifespan."""
+    await _db.init_db()
 
 
 # ── User CRUD ─────────────────────────────────────────────────────────────────
 
-def create_user(username: str, password: str, email: str, role: str = "user") -> Dict[str, Any]:
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "INSERT INTO users (username, password, email, role) VALUES (?, ?, ?, ?)",
-            (username, _hash_password(password), email, role),
+async def register_user(
+    username: str, password: str, email: str
+) -> Dict[str, Any]:
+    """Create a new user.  Returns user dict or raises ValueError."""
+    async with _db.AsyncSessionLocal() as session:
+        try:
+            hashed = hash_password(password)
+            session.add(
+                _db.User(
+                    username=username, password=hashed,
+                    email=email, role="user",
+                )
+            )
+            await session.commit()
+            result = await session.execute(
+                select(_db.User).where(_db.User.username == username)
+            )
+            user = result.scalar_one()
+            return _user_to_dict(user)
+        except Exception as exc:
+            await session.rollback()
+            raise ValueError("Username or email already exists") from exc
+
+
+async def login_user(username: str, password: str) -> Dict[str, Any]:
+    """
+    Verify credentials.
+    Returns {"token": jwt, "user": user_dict} on success.
+    Raises ValueError on failure.
+    """
+    async with _db.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(_db.User).where(_db.User.username == username)
         )
-        conn.commit()
-        cursor.execute(
-            "SELECT id, username, email, role FROM users WHERE username = ?", (username,)
+        user = result.scalar_one_or_none()
+
+    if not user:
+        raise ValueError("Invalid credentials")
+
+    if not verify_password(password, user.password):
+        raise ValueError("Invalid credentials")
+
+    if user.is_blocked:
+        # Try to auto-release if the temp-block window has expired
+        released = await check_and_release_expired_blocks(user.id)
+        if not released:
+            raise ValueError("User is blocked")
+        # Re-fetch after release
+        async with _db.AsyncSessionLocal() as session:
+            r = await session.execute(
+                select(_db.User).where(_db.User.id == user.id)
+            )
+            user = r.scalar_one()
+
+    token = await create_session(user.id)
+    return {"token": token, "user": _user_to_dict(user)}
+
+
+async def get_current_user(token: str) -> Optional[Dict[str, Any]]:
+    """Decode JWT and return user dict, or None."""
+    return await verify_session(token)
+
+
+async def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
+    async with _db.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(_db.User).where(_db.User.id == user_id)
         )
-        u = cursor.fetchone()
-        return {"success": True, "user": {"id": u[0], "username": u[1], "email": u[2], "role": u[3]}}
-    except sqlite3.IntegrityError:
-        return {"success": False, "error": "Username or email already exists"}
-    finally:
-        conn.close()
+        user = result.scalar_one_or_none()
+    return _user_to_dict(user) if user else None
 
 
-def verify_user(username: str, password: str) -> Optional[Dict[str, Any]]:
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, username, email, role, is_blocked, blocked_at, failed_attempts, temp_blocks "
-        "FROM users WHERE username = ? AND password = ?",
-        (username, _hash_password(password)),
-    )
-    user = cursor.fetchone()
-    conn.close()
-    if not user:
-        return None
-
-    is_blocked = bool(user[4])
-    blocked_at = user[5]
-
-    if is_blocked and blocked_at:
-        was_released = check_and_release_expired_blocks(user[0])
-        if was_released:
-            user = get_user_by_id(user[0])
-            if user:
-                return {"success": True, "user": user}
-            return None
-        return {"success": False, "error": "User is blocked", "blocked": True}
-
-    if is_blocked:
-        return {"success": False, "error": "User is blocked", "blocked": True}
-
-    return {
-        "success": True,
-        "user": {
-            "id": user[0], "username": user[1], "email": user[2], "role": user[3],
-            "failed_attempts": user[6], "temp_blocks": user[7],
-        },
-    }
+async def get_all_users() -> list:
+    async with _db.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(_db.User).order_by(_db.User.created_at.desc())
+        )
+        users = result.scalars().all()
+    return [_user_to_dict(u) for u in users]
 
 
-def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, username, email, role, is_blocked, blocked_at, failed_attempts, temp_blocks "
-        "FROM users WHERE id = ?",
-        (user_id,),
-    )
-    user = cursor.fetchone()
-    conn.close()
-    if not user:
-        return None
-    return {
-        "id": user[0], "username": user[1], "email": user[2], "role": user[3],
-        "is_blocked": bool(user[4]), "blocked_at": user[5],
-        "failed_attempts": user[6], "temp_blocks": user[7],
-    }
-
-
-def get_all_users() -> list:
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, username, email, role, is_blocked, failed_attempts, temp_blocks, created_at "
-        "FROM users ORDER BY created_at DESC"
-    )
-    users = cursor.fetchall()
-    conn.close()
-    return [
-        {
-            "id": u[0], "username": u[1], "email": u[2], "role": u[3],
-            "is_blocked": bool(u[4]), "failed_attempts": u[5],
-            "temp_blocks": u[6], "created_at": u[7],
-        }
-        for u in users
-    ]
-
-
-def unblock_user(user_id: int):
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE users SET is_blocked=0, blocked_at=NULL, failed_attempts=0, temp_blocks=0 WHERE id=?",
-        (user_id,),
-    )
-    conn.commit()
-    conn.close()
+async def unblock_user(user_id: int):
+    async with _db.AsyncSessionLocal() as session:
+        await session.execute(
+            update(_db.User)
+            .where(_db.User.id == user_id)
+            .values(
+                is_blocked=False, blocked_at=None,
+                failed_attempts=0, temp_blocks=0,
+            )
+        )
+        await session.commit()
 
 
 # ── Blocking logic ────────────────────────────────────────────────────────────
 
-def increment_failed_attempts(user_id: int) -> Dict[str, Any]:
-    settings = get_alert_settings()
+async def increment_failed_attempts(user_id: int) -> Dict[str, Any]:
+    settings = await get_alert_settings()
     max_attempts = settings.get("max_attempts_to_block", 3)
-    window_minutes = settings.get("warning_window_minutes", 10)
 
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT failed_attempts FROM users WHERE id=?", (user_id,))
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        return {"action": "none"}
-
-    new_count = (row[0] or 0) + 1
-    cursor.execute("UPDATE users SET failed_attempts=? WHERE id=?", (new_count, user_id))
-    conn.commit()
-    conn.close()
+    async with _db.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(_db.User.failed_attempts).where(_db.User.id == user_id)
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return {"action": "none"}
+        new_count = (row or 0) + 1
+        await session.execute(
+            update(_db.User)
+            .where(_db.User.id == user_id)
+            .values(failed_attempts=new_count)
+        )
+        await session.commit()
 
     if new_count >= max_attempts:
         return {"action": "block", "count": new_count}
     return {"action": "warn", "count": new_count}
 
 
-def block_user_temp(user_id: int) -> Dict[str, Any]:
-    settings = get_alert_settings()
+async def block_user_temp(user_id: int) -> Dict[str, Any]:
+    settings = await get_alert_settings()
     max_temp = settings.get("max_temp_blocks", 3)
     duration = settings.get("block_duration_minutes", 30)
 
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT temp_blocks FROM users WHERE id=?", (user_id,))
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        return {"blocked": False}
-
-    temp_count = (row[0] or 0) + 1
-
-    if temp_count >= max_temp:
-        # Permanent block
-        cursor.execute(
-            "UPDATE users SET is_blocked=1, blocked_at=NULL, failed_attempts=0, temp_blocks=? WHERE id=?",
-            (temp_count, user_id),
+    async with _db.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(_db.User.temp_blocks).where(_db.User.id == user_id)
         )
-        conn.commit()
-        conn.close()
-        return {"blocked": True, "permanent": True, "temp_blocks": temp_count}
+        row = result.scalar_one_or_none()
+        if row is None:
+            return {"blocked": False}
+        temp_count = (row or 0) + 1
 
-    # Temporary block
-    unblock_time = datetime.utcnow() + timedelta(minutes=duration)
-    cursor.execute(
-        "UPDATE users SET is_blocked=1, blocked_at=?, failed_attempts=0, temp_blocks=? WHERE id=?",
-        (unblock_time.isoformat(), temp_count, user_id),
-    )
-    conn.commit()
-    conn.close()
-    return {"blocked": True, "permanent": False, "temp_blocks": temp_count, "unblock_at": unblock_time.isoformat()}
-
-
-def check_and_release_expired_blocks(user_id: int) -> bool:
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT is_blocked, blocked_at FROM users WHERE id=?", (user_id,))
-    row = cursor.fetchone()
-    if not row or not row[0] or not row[1]:
-        conn.close()
-        return False
-    try:
-        unblock_time = datetime.fromisoformat(row[1])
-        if datetime.utcnow() >= unblock_time:
-            cursor.execute(
-                "UPDATE users SET is_blocked=0, blocked_at=NULL, failed_attempts=0 WHERE id=?",
-                (user_id,),
+        if temp_count > max_temp:
+            await session.execute(
+                update(_db.User)
+                .where(_db.User.id == user_id)
+                .values(
+                    is_blocked=True, blocked_at=None,
+                    failed_attempts=0, temp_blocks=temp_count,
+                )
             )
-            conn.commit()
-            conn.close()
+            await session.commit()
+            return {"blocked": True, "permanent": True, "temp_blocks": temp_count}
+
+        unblock_time = datetime.now(timezone.utc) + timedelta(minutes=duration)
+        await session.execute(
+            update(_db.User)
+            .where(_db.User.id == user_id)
+            .values(
+                is_blocked=True, blocked_at=unblock_time,
+                failed_attempts=0, temp_blocks=temp_count,
+            )
+        )
+        await session.commit()
+        return {
+            "blocked": True, "permanent": False,
+            "temp_blocks": temp_count, "unblock_at": unblock_time.isoformat(),
+        }
+
+
+async def check_and_release_expired_blocks(user_id: int) -> bool:
+    async with _db.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(_db.User.is_blocked, _db.User.blocked_at)
+            .where(_db.User.id == user_id)
+        )
+        row = result.one_or_none()
+        if not row or not row.is_blocked or not row.blocked_at:
+            return False
+        blocked_at = row.blocked_at
+        if blocked_at.tzinfo is None:
+            blocked_at = blocked_at.replace(tzinfo=timezone.utc)
+        if blocked_at < datetime.now(timezone.utc):
+            await session.execute(
+                update(_db.User)
+                .where(_db.User.id == user_id)
+                .values(is_blocked=False, blocked_at=None, failed_attempts=0)
+            )
+            await session.commit()
             return True
-    except Exception:
-        pass
-    conn.close()
     return False
 
 
-# ── Security logging with JSON export ────────────────────────────────────────
+# ── Session / token management ────────────────────────────────────────────────
 
-def _export_logs_to_json():
-    """Write all security logs to ./security_logs.json in the current directory."""
-    try:
-        logs = get_security_logs(limit=10000)
-        with open(LOGS_JSON_PATH, "w", encoding="utf-8") as f:
-            json.dump(logs, f, indent=2, default=str)
-    except Exception as e:
-        print(f"[Auth] JSON log export failed: {e}")
+async def create_session(user_id: int, hours: int = 24) -> str:
+    """Create a DB session row and return a JWT token."""
+    # Fetch user for token payload
+    async with _db.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(_db.User).where(_db.User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+
+    if not user:
+        raise ValueError("User not found")
+
+    token = create_access_token(user.id, user.username, user.role)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
+
+    async with _db.AsyncSessionLocal() as session:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        stmt = pg_insert(_db.Session).values(
+            token=token,
+            user_id=user_id,
+            expires_at=expires_at,
+            context=[],
+        ).on_conflict_do_update(
+            index_elements=["token"],
+            set_={"expires_at": expires_at, "user_id": user_id},
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+    return token
 
 
-def log_security_event(
+async def verify_session(token: str) -> Optional[Dict[str, Any]]:
+    """Decode JWT, check the session row exists in DB, update last_active."""
+    if not token:
+        return None
+
+    payload = decode_token(token)
+    if not payload:
+        return None
+
+    user_id = int(payload["sub"])
+
+    async with _db.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(_db.Session).where(_db.Session.token == token)
+        )
+        sess = result.scalar_one_or_none()
+        if not sess:
+            return None
+
+        now = datetime.now(timezone.utc)
+        expires = sess.expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires < now:
+            return None
+
+        # Update last_active for idle-timeout tracking
+        await session.execute(
+            update(_db.Session)
+            .where(_db.Session.token == token)
+            .values(last_active=now)
+        )
+        await session.commit()
+
+    return await get_user_by_id(user_id)
+
+
+async def purge_expired_sessions():
+    """Delete sessions that have expired or have been idle too long."""
+    now = datetime.now(timezone.utc)
+    idle_cutoff = now - timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES)
+
+    async with _db.AsyncSessionLocal() as session:
+        await session.execute(
+            text(
+                """
+                DELETE FROM sessions
+                WHERE expires_at < :now
+                   OR last_active < :idle_cutoff
+                """
+            ),
+            {"now": now, "idle_cutoff": idle_cutoff},
+        )
+        await session.commit()
+
+
+# ── Session conversation context ──────────────────────────────────────────────
+
+async def get_session_context(user_id: int) -> list:
+    """Return the conversation context list from the user's active session."""
+    async with _db.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(_db.Session.context)
+            .where(_db.Session.user_id == user_id)
+            .where(_db.Session.expires_at > datetime.now(timezone.utc))
+            .order_by(_db.Session.last_active.desc())
+            .limit(1)
+        )
+        row = result.scalar_one_or_none()
+    if row is None:
+        return []
+    return row if isinstance(row, list) else []
+
+
+async def save_session_context(user_id: int, context_list: list):
+    """Persist conversation context to the user's most-recently-active session."""
+    now = datetime.now(timezone.utc)
+    async with _db.AsyncSessionLocal() as session:
+        # Find the most-recent active session token
+        result = await session.execute(
+            select(_db.Session.token)
+            .where(_db.Session.user_id == user_id)
+            .where(_db.Session.expires_at > now)
+            .order_by(_db.Session.last_active.desc())
+            .limit(1)
+        )
+        token = result.scalar_one_or_none()
+        if token:
+            await session.execute(
+                update(_db.Session)
+                .where(_db.Session.token == token)
+                .values(context=context_list, last_active=now)
+            )
+            await session.commit()
+
+
+async def reset_session_context(user_id: int):
+    """Clear conversation context for all active sessions of this user."""
+    now = datetime.now(timezone.utc)
+    async with _db.AsyncSessionLocal() as session:
+        await session.execute(
+            update(_db.Session)
+            .where(_db.Session.user_id == user_id)
+            .where(_db.Session.expires_at > now)
+            .values(context=[])
+        )
+        await session.commit()
+
+
+# ── Security logging ──────────────────────────────────────────────────────────
+
+async def log_security_event(
     user_id: int,
     username: str,
     prompt: str,
@@ -306,90 +371,126 @@ def log_security_event(
     severity: str,
     details: dict = None,
 ):
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """INSERT INTO security_logs
-           (user_id, username, prompt, detection_type, action, severity, details)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (
-            user_id, username, prompt, detection_type, action, severity,
-            json.dumps(details) if details else None,
-        ),
-    )
-    conn.commit()
-    conn.close()
-    # Export to JSON on every new event
-    _export_logs_to_json()
+    """Write a security event to TimescaleDB security_logs."""
+    async with _db.AsyncSessionLocal() as session:
+        session.add(
+            _db.SecurityLog(
+                user_id=user_id,
+                username=username,
+                prompt=prompt,
+                detection_type=detection_type,
+                action=action,
+                severity=severity,
+                details=details,
+            )
+        )
+        await session.commit()
 
 
-def get_security_logs(limit: int = 100) -> list:
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, timestamp, user_id, username, prompt, detection_type, action, severity, details "
-        "FROM security_logs ORDER BY timestamp DESC LIMIT ?",
-        (limit,),
-    )
-    logs = cursor.fetchall()
-    conn.close()
-    return [
-        {
-            "id": log[0], "timestamp": log[1], "user_id": log[2],
-            "username": log[3], "prompt": log[4], "detection_type": log[5],
-            "action": log[6], "severity": log[7],
-            "details": json.loads(log[8]) if log[8] else None,
-        }
-        for log in logs
-    ]
+async def get_security_logs(limit: int = 100) -> list:
+    async with _db.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(_db.SecurityLog)
+            .order_by(_db.SecurityLog.timestamp.desc())
+            .limit(limit)
+        )
+        logs = result.scalars().all()
+    return [_log_to_dict(log) for log in logs]
 
 
 # ── Alert settings ────────────────────────────────────────────────────────────
 
-def get_alert_settings() -> dict:
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT max_attempts_to_block, warning_window_minutes, block_duration_minutes, "
-        "max_temp_blocks, enable_email, enable_telegram, email_address, telegram_chat_id "
-        "FROM alert_settings WHERE id=1"
-    )
-    row = cursor.fetchone()
-    conn.close()
+async def get_alert_settings() -> dict:
+    async with _db.AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(_db.AlertSettings).where(_db.AlertSettings.id == 1)
+        )
+        row = result.scalar_one_or_none()
     if not row:
         return {}
     return {
-        "max_attempts_to_block": row[0], "warning_window_minutes": row[1],
-        "block_duration_minutes": row[2], "max_temp_blocks": row[3],
-        "enable_email": bool(row[4]), "enable_telegram": bool(row[5]),
-        "email_address": row[6] or "", "telegram_chat_id": row[7] or "",
+        "max_attempts_to_block": row.max_attempts_to_block,
+        "warning_window_minutes": row.warning_window_minutes,
+        "block_duration_minutes": row.block_duration_minutes,
+        "max_temp_blocks": row.max_temp_blocks,
+        "enable_email": row.enable_email,
+        "enable_telegram": row.enable_telegram,
+        "email_address": row.email_address or "",
+        "telegram_chat_id": row.telegram_chat_id or "",
     }
 
 
-def update_alert_settings(settings: dict) -> dict:
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """UPDATE alert_settings SET
-           max_attempts_to_block=?, warning_window_minutes=?, block_duration_minutes=?,
-           max_temp_blocks=?, enable_email=?, enable_telegram=?,
-           email_address=?, telegram_chat_id=?, updated_at=CURRENT_TIMESTAMP
-           WHERE id=1""",
-        (
-            settings.get("max_attempts_to_block", 3),
-            settings.get("warning_window_minutes", 10),
-            settings.get("block_duration_minutes", 30),
-            settings.get("max_temp_blocks", 3),
-            int(settings.get("enable_email", False)),
-            int(settings.get("enable_telegram", False)),
-            settings.get("email_address", ""),
-            settings.get("telegram_chat_id", ""),
-        ),
-    )
-    conn.commit()
-    conn.close()
-    return get_alert_settings()
+async def update_alert_settings(**kwargs) -> dict:
+    """Accept keyword args matching AlertSettings column names."""
+    async with _db.AsyncSessionLocal() as session:
+        values = {
+            k: v for k, v in kwargs.items()
+            if k in {
+                "max_attempts_to_block", "warning_window_minutes",
+                "block_duration_minutes", "max_temp_blocks",
+                "enable_email", "enable_telegram",
+                "email_address", "telegram_chat_id",
+            }
+        }
+        if values:
+            await session.execute(
+                update(_db.AlertSettings)
+                .where(_db.AlertSettings.id == 1)
+                .values(**values)
+            )
+            await session.commit()
+    return await get_alert_settings()
 
 
-# Initialise on import
-init_database()
+# ── Private helpers ───────────────────────────────────────────────────────────
+
+def _user_to_dict(u: _db.User) -> Dict[str, Any]:
+    return {
+        "id": u.id,
+        "username": u.username,
+        "email": u.email,
+        "role": u.role,
+        "is_blocked": u.is_blocked,
+        "blocked_at": u.blocked_at.isoformat() if u.blocked_at else None,
+        "failed_attempts": u.failed_attempts,
+        "temp_blocks": u.temp_blocks,
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+    }
+
+
+def _log_to_dict(log: _db.SecurityLog) -> Dict[str, Any]:
+    return {
+        "id": log.id,
+        "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+        "user_id": log.user_id,
+        "username": log.username,
+        "prompt": log.prompt,
+        "detection_type": log.detection_type,
+        "action": log.action,
+        "severity": log.severity,
+        "details": log.details,
+    }
+
+
+# ── Legacy compatibility shim (used by existing callers) ──────────────────────
+# These are kept as aliases so any remaining direct `auth.create_user(...)` etc.
+# calls don't hard-break during the migration.
+
+async def create_user(username: str, password: str, email: str, role: str = "user") -> Dict[str, Any]:
+    """Thin wrapper kept for backward compatibility with old callers."""
+    try:
+        user = await register_user(username, password, email)
+        return {"success": True, "user": user}
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+
+
+async def verify_user(username: str, password: str) -> Optional[Dict[str, Any]]:
+    """Thin wrapper kept for backward compatibility with old callers."""
+    try:
+        return await login_user(username, password)
+    except ValueError as exc:
+        msg = str(exc)
+        if "blocked" in msg.lower():
+            return {"success": False, "error": msg, "blocked": True}
+        return None

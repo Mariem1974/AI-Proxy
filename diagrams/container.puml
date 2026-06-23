@@ -1,0 +1,31 @@
+@startuml container
+!include C4Container.puml
+
+title Container Diagram - Security Booster (Docker Compose)
+
+Person(user,  "Finance Employee", "Asks finance questions\nand uploads documents")
+Person(admin, "Admin",            "Manages users, configures\npipeline and alerts")
+
+System_Ext(telegram, "Telegram Bot API", "Receives violation alerts")
+System_Ext(gmail,    "Gmail SMTP",       "Receives violation alert emails")
+
+System_Boundary(sb, "Security Booster — Docker Compose") {
+
+  Container(app, "App Container", "FastAPI + React\nPython 3.10 / Uvicorn", "9-stage security pipeline,\nauthentication, violation handling,\ndocument processing, React SPA.\nPort 5000")
+
+  Container(ollama, "Ollama Container", "qwen2.5:1.5b\nGGUF Q4", "Local LLM inference.\nGenerates finance responses.\nPort 11434")
+
+  ContainerDb(postgres, "PostgreSQL + TimescaleDB", "PostgreSQL 16\nTimescaleDB", "Users, sessions (JWT tokens),\nsecurity_logs hypertable,\nalert_settings, conversation context")
+
+  ContainerDb(chromadb, "ChromaDB", "ChromaDB standalone", "Finance domain embeddings\nused for context relevance\nsimilarity checks.\nPort 8000")
+}
+
+Rel(user,  app,      "Uses",                        "HTTPS")
+Rel(admin, app,      "Uses",                        "HTTPS")
+Rel(app,   ollama,   "Forwards sanitised prompt",   "HTTP / JSON")
+Rel(app,   postgres, "Reads and writes",            "asyncpg / SQLAlchemy")
+Rel(app,   chromadb, "Similarity queries",          "HTTP REST")
+Rel(app,   telegram, "Sends violation alerts",      "HTTPS Bot API")
+Rel(app,   gmail,    "Sends violation alerts",      "SMTP TLS 587")
+
+@enduml

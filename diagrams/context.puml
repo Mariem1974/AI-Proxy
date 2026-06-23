@@ -1,0 +1,27 @@
+@startuml context
+!include C4Context.puml
+
+title System Context - Security Booster
+
+LAYOUT_LEFT_RIGHT()
+
+Person(user,  "Finance Employee", "Asks finance questions\nand uploads documents")
+Person(admin, "Admin",            "Configures pipeline,\nmanages users, views logs")
+
+System(sb, "Security Booster", "AI proxy that filters user messages\nthrough a 9-stage security pipeline\nbefore forwarding to an LLM")
+
+System_Ext(ollama,    "Ollama LLM",              "Local LLM (qwen2.5:1.5b)\nGenerates responses")
+System_Ext(telegram,  "Telegram Bot",             "Receives real-time\nviolation alerts")
+System_Ext(gmail,     "Gmail SMTP",               "Receives violation\nalert emails")
+System_Ext(postgres,  "PostgreSQL + TimescaleDB", "Stores users, sessions,\nsecurity logs, alert settings")
+System_Ext(chromadb,  "ChromaDB",                 "Finance domain embeddings\nfor context relevance checks")
+
+Rel(user,  sb,       "Chat / document upload", "HTTPS")
+Rel(admin, sb,       "Admin panel",            "HTTPS")
+Rel(sb,    ollama,   "Sanitised prompt",       "HTTP")
+Rel(sb,    telegram, "Violation alerts",       "HTTPS Bot API")
+Rel(sb,    gmail,    "Violation alerts",       "SMTP TLS")
+Rel(sb,    postgres, "Read / write",           "asyncpg")
+Rel(sb,    chromadb, "Similarity search",      "HTTP REST")
+
+@enduml

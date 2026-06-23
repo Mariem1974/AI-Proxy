@@ -7,19 +7,19 @@ All modules import from here — no circular imports.
 
 FEATURES = {
     # ── INPUT PIPELINE ──────────────────────────────────
-    "INPUT_UNICODE_FIREWALL": False,   # Emoji stego + homoglyph (new)
-    "INPUT_SPACY_FIREWALL":   False,   # spaCy rule engine
-    "BERT_FIREWALL":          False,   # ModernBERT classifier
-    "INPUT_PII_FIREWALL":     False,   # GLiNER PII on input
-    "INPUT_CONTEXT_RELEVANCE":False,   # Vector DB context check
+    "INPUT_UNICODE_FIREWALL": True,    # Emoji stego + homoglyph — fast, zero false positives
+    "INPUT_SPACY_FIREWALL":   True,    # spaCy rule engine — fast, catches injections/SQLi/XSS
+    "BERT_FIREWALL":          False,   # ModernBERT — ML inference, admin opt-in
+    "INPUT_PII_FIREWALL":     False,   # GLiNER PII — slower, admin opt-in
+    "INPUT_CONTEXT_RELEVANCE":False,   # Requires PDF upload first
 
     # ── OUTPUT PIPELINE ─────────────────────────────────
-    "OUTPUT_SPACY_FIREWALL":   False,  # Enhanced output spaCy rules
-    "OUTPUT_PII_FIREWALL":     False,  # GLiNER PII on output
-    "OUTPUT_CONTEXT_RELEVANCE":False,  # Vector DB context check
+    "OUTPUT_SPACY_FIREWALL":   True,   # Output rule engine — fast
+    "OUTPUT_PII_FIREWALL":     False,  # Llama3.2 rewriter — slow, admin opt-in
+    "OUTPUT_CONTEXT_RELEVANCE":False,  # Requires PDF upload first
 
     # ── DOCUMENT PROCESSING ─────────────────────────────
-    "DOCUMENT_PROCESSING":    False,   # File upload scanning
+    "DOCUMENT_PROCESSING":    False,   # Admin opt-in
 }
 
 CONTEXT_SETTINGS = {
